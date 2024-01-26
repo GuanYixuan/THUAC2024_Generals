@@ -5,17 +5,17 @@
 #include <set>
 #include "gamestate.hpp"
 
-/* ### `bool call_generals(GameState &gamestate, int player, std::pair<int, int> location)`
+/* ### `bool call_generals(GameState &gamestate, int player, const Coord& location)`
 
 * 描述：在指定位置召唤副将。
 * 参数：
   * `GameState &gamestate`：游戏状态对象的引用。
   * `int player`：召唤副将的玩家编号。
-  * `std::pair<int, int> location`：召唤副将的位置。
+  * `const Coord& location`：召唤副将的位置。
 * 返回值：如果召唤成功，返回 `true`；否则返回 `false`。
 */
-bool call_generals(GameState &gamestate, int player, std::pair<int, int> location) {
-	Cell &cell = gamestate.board[location.first][location.second];
+bool call_generals(GameState &gamestate, int player, const Coord& location) {
+	Cell &cell = gamestate.board[location.x][location.y];
 
 	// 如果玩家的硬币少于50，返回false
 	if (gamestate.coin[player] < Constant::SPAWN_GENERAL_COST) return false;
@@ -50,8 +50,8 @@ bool call_generals(GameState &gamestate, int player, std::pair<int, int> locatio
  */
 float compute_attack(const Cell &cell, const GameState &gamestate) {
 	float attack = 1.0;
-	int cell_x = cell.position.first;
-	int cell_y = cell.position.second;
+	int cell_x = cell.position.x;
+	int cell_y = cell.position.y;
 	// 遍历cell周围至少5*5的区域，寻找里面是否有将军，他们是否使用了增益或减益技能
 	for (int i = -2; i <= 2; ++i) {
 		for (int j = -2; j <= 2; ++j) {
@@ -69,8 +69,8 @@ float compute_attack(const Cell &cell, const GameState &gamestate) {
 	// 考虑gamestate中的超级武器是否被激活，（可以获取到激活的位置）该位置的军队是否会被影响
 	for (const SuperWeapon &active_weapon : gamestate.active_super_weapon) {
 		if (active_weapon.type == WeaponType::ATTACK_ENHANCE &&
-			cell_x - 1 <= active_weapon.position.first && active_weapon.position.first <= cell_x + 1 &&
-			cell_y - 1 <= active_weapon.position.second && active_weapon.position.second <= cell_y + 1 &&
+			cell_x - 1 <= active_weapon.position.x && active_weapon.position.x <= cell_x + 1 &&
+			cell_y - 1 <= active_weapon.position.y && active_weapon.position.y <= cell_y + 1 &&
 			active_weapon.player == cell.player)
 		{
 			attack = attack * 3;
@@ -90,8 +90,8 @@ float compute_attack(const Cell &cell, const GameState &gamestate) {
 * 返回值：防御力值。 */
 float compute_defence(const Cell &cell, const GameState &gamestate) {
 	float defence = 1.0;
-	int cell_x = cell.position.first;
-	int cell_y = cell.position.second;
+	int cell_x = cell.position.x;
+	int cell_y = cell.position.y;
 	// 遍历cell周围至少5*5的区域，寻找里面是否有将军，他们是否使用了增益或减益技能
 	for (int i = -2; i <= 2; ++i) {
 		for (int j = -2; j <= 2; ++j) {
@@ -112,8 +112,8 @@ float compute_defence(const Cell &cell, const GameState &gamestate) {
 	for (const SuperWeapon &active_weapon : gamestate.active_super_weapon) {
 		if (
 			active_weapon.type == WeaponType::ATTACK_ENHANCE &&
-			cell_x - 1 <= active_weapon.position.first && active_weapon.position.first <= cell_x + 1 &&
-			cell_y - 1 <= active_weapon.position.second && active_weapon.position.second <= cell_y + 1 &&
+			cell_x - 1 <= active_weapon.position.x && active_weapon.position.x <= cell_x + 1 &&
+			cell_y - 1 <= active_weapon.position.y && active_weapon.position.y <= cell_y + 1 &&
 			active_weapon.player == cell.player)
 		{
 			defence = defence * 3;
@@ -124,55 +124,55 @@ float compute_defence(const Cell &cell, const GameState &gamestate) {
 	return defence;
 }
 
-/* ### `bool outrange(std::pair<int, int> location)`
+/* ### `bool outrange(const Coord& location)`
 
 * 描述：检查位置是否越界。
 * 参数：
-  * `std::pair<int, int> location`：待检查的位置。
+  * `const Coord& location`：待检查的位置。
 * 返回值：如果越界，返回 `true`；否则返回 `false`。 */
-bool outrange(const std::pair<int, int> &location) {
-	return location.first < 0 || location.first >= Constant::row || location.second < 0 ||
-		   location.second >= Constant::col;
+bool outrange(const Coord& location) {
+	return location.x < 0 || location.x >= Constant::row || location.y < 0 ||
+		   location.y >= Constant::col;
 }
 
-/* ### `std::pair<int, int> calculate_new_pos(std::pair<int, int> location, Direction direction)`
+/* ### `const Coord& calculate_new_pos(const Coord& location, Direction direction)`
 
 * 描述：根据移动方向计算新的位置。
 * 参数：
-  * `std::pair<int, int> location`：当前位置。
+  * `const Coord& location`：当前位置。
   * `Direction direction`：移动方向。
 * 返回值：新的位置坐标。 */
-std::pair<int, int> calculate_new_pos(std::pair<int, int> location, Direction direction) {
-	std::pair<int, int> new_location = {0, 0};
+Coord calculate_new_pos(const Coord& location, Direction direction) {
+	Coord new_location = {0, 0};
 	if (direction == Direction::UP) {
-		new_location.first = location.first - 1;
-		new_location.second = location.second;
+		new_location.x = location.x - 1;
+		new_location.y = location.y;
 	} else if (direction == Direction::DOWN) {
-		new_location.first = location.first + 1;
-		new_location.second = location.second;
+		new_location.x = location.x + 1;
+		new_location.y = location.y;
 	} else if (direction == Direction::LEFT) {
-		new_location.first = location.first;
-		new_location.second = location.second - 1;
+		new_location.x = location.x;
+		new_location.y = location.y - 1;
 	} else if (direction == Direction::RIGHT) {
-		new_location.first = location.first;
-		new_location.second = location.second + 1;
+		new_location.x = location.x;
+		new_location.y = location.y + 1;
 	}
 	if (outrange(new_location)) return {-1, -1};
 	return new_location;
 }
 
-/* ### `bool army_move(const std::pair<int, int> location, GameState &gamestate, int player, Direction direction, int num)`
+/* ### `bool army_move(const const Coord& location, GameState &gamestate, int player, Direction direction, int num)`
 
 * 描述：执行军队移动操作。
 * 参数：
-  * `std::pair<int, int> location`：起始位置。
+  * `const Coord& location`：起始位置。
   * `GameState &gamestate`：游戏状态对象的引用。
   * `int player`：执行移动的玩家编号。
   * `Direction direction`：移动方向。
   * `int num`：移动的兵力数量。
 * 返回值：如果移动成功，返回 `true`；否则返回 `false`。 */
-bool army_move(const std::pair<int, int> location, GameState &gamestate, int player, Direction direction, int num) {
-	int x = location.first, y = location.second;
+bool army_move(const Coord& location, GameState &gamestate, int player, Direction direction, int num) {
+	int x = location.x, y = location.y;
 	if (outrange(location)) return false; // 越界
 	if (player != 0 && player != 1) return false; // 玩家参数非法
 	if (gamestate.board[x][y].player != player) return false; // 操作格子非法
@@ -184,12 +184,12 @@ bool army_move(const std::pair<int, int> location, GameState &gamestate, int pla
 
 	for (SuperWeapon &sw : gamestate.active_super_weapon) { // 超级武器效果
 		if (sw.position == location && sw.rest && sw.type == WeaponType::TRANSMISSION) return false; // 超时空传送眩晕
-		if (std::abs(sw.position.first - x) <= 1 && std::abs(sw.position.second - y) <= 1 && sw.rest && sw.type == WeaponType::TIME_STOP)
+		if (std::abs(sw.position.x - x) <= 1 && std::abs(sw.position.y - y) <= 1 && sw.rest && sw.type == WeaponType::TIME_STOP)
 			return false; // 时间暂停效果
 	}
 
-	std::pair<int, int> new_position = calculate_new_pos(location, direction);
-	int newX = new_position.first, newY = new_position.second;
+	const Coord& new_position = calculate_new_pos(location, direction);
+	int newX = new_position.x, newY = new_position.y;
 	Cell& new_cell = gamestate.board[newX][newY];
 
 	if (newX < 0) return false; // 越界
@@ -220,20 +220,20 @@ bool army_move(const std::pair<int, int> location, GameState &gamestate, int pla
 	return true;
 }
 
-/* ### `bool check_general_movement(const std::pair<int, int> location, GameState &gamestate, int player, const std::pair<int, int> destination)`
+/* ### `bool check_general_movement(const Coord& location, GameState &gamestate, int player, const Coord& destination)`
 
 * 描述：检查将军移动的合法性。
 * 参数：
-  * `std::pair<int, int> location`：将军当前位置。
+  * `const Coord& location`：将军当前位置。
   * `GameState &gamestate`：游戏状态对象的引用。
   * `int player`：执行移动的玩家编号。
-  * `std::pair<int, int> destination`：目标位置。
+  * `const Coord& destination`：目标位置。
 * 返回值：如果移动合法，返回 `true`；否则返回 `false`。 */
-std::pair<bool, int> check_general_movement(const std::pair<int, int> location,
+std::pair<bool, int> check_general_movement(const Coord& location,
 											GameState &gamestate, int player,
-											const std::pair<int, int> destination)
+											const Coord& destination)
 {
-	int x = location.first, y = location.second;
+	int x = location.x, y = location.y;
 
 	if (outrange(location)) return std::make_pair(false, -1); // 越界
 	if (player != 0 && player != 1) return std::make_pair(false, -1); // 玩家非法
@@ -247,15 +247,15 @@ std::pair<bool, int> check_general_movement(const std::pair<int, int> location,
 	for (SuperWeapon &sw : gamestate.active_super_weapon) {
 		if (sw.position == location && sw.rest && sw.type == WeaponType::TRANSMISSION)
 			return std::make_pair(false, -1); // 超时空传送眩晕
-		if (std::abs(sw.position.first - x) <= 1 && std::abs(sw.position.second - y) <= 1 && sw.rest && sw.type == WeaponType::TIME_STOP)
+		if (std::abs(sw.position.x - x) <= 1 && std::abs(sw.position.y - y) <= 1 && sw.rest && sw.type == WeaponType::TIME_STOP)
 			return std::make_pair(false, -1); // 时间暂停效果
 	}
 
-	int newX = destination.first, newY = destination.second;
+	int newX = destination.x, newY = destination.y;
 
 	// bfs检查可移动性
 	int op = -1, cl = 0;
-	std::vector<std::pair<int, int>> queue;
+	std::vector<Coord> queue;
 	std::vector<int> steps;
 	static bool check[25][25];
 	memset(check, 0, sizeof(check));
@@ -264,16 +264,16 @@ std::pair<bool, int> check_general_movement(const std::pair<int, int> location,
 	steps.push_back(0);
 	check[x][y] = true;
 
-	static const std::vector<std::pair<int, int>> directions = {
+	static const std::vector<Coord> directions = {
 		{-1, 0}, {1, 0}, {0, -1}, {0, 1}};
 
 	while (op < cl) {
 		op += 1;
 		if (steps[op] > gamestate.board[x][y].generals->rest_move) break; // 步数超限
 		if (queue[op] == std::make_pair(newX, newY)) return std::make_pair(true, steps[op]); // 到达目的地
-		int p = queue[op].first, q = queue[op].second;
+		int p = queue[op].x, q = queue[op].y;
 		for (const auto &direction : directions) {
-			int newP = p + direction.first, newQ = q + direction.second;
+			int newP = p + direction.x, newQ = q + direction.y;
 			if (outrange({newP, newQ})) continue; // 越界
 			if (check[newP][newQ]) continue; // 已入队
 			if (gamestate.board[newP][newQ].type == CellType::SWAMP && gamestate.tech_level[player][1] == 0)
@@ -291,20 +291,20 @@ std::pair<bool, int> check_general_movement(const std::pair<int, int> location,
 	return std::make_pair(false, -1);
 }
 
-/* ### `bool general_move(const std::pair<int, int> location, GameState &gamestate, int player, const std::pair<int, int> destination)`
+/* ### `bool general_move(const Coord& location, GameState &gamestate, int player, const Coord& destination)`
 
 * 描述：执行将军移动操作（注：此函数不进行合法性检查）。
 * 参数：
-  * `std::pair<int, int> location`：将军当前位置。
+  * `const Coord& location`：将军当前位置。
   * `GameState &gamestate`：游戏状态对象的引用。
   * `int player`：执行移动的玩家编号。
-  * `std::pair<int, int> destination`：目标位置。
+  * `const Coord& destination`：目标位置。
 * 返回值：如果移动成功，返回 `true`；否则返回 `false`。 */
-bool general_move(const std::pair<int, int>& location, GameState &gamestate, int player, const std::pair<int, int>& destination) {
+bool general_move(const Coord& location, GameState &gamestate, int player, const Coord& destination) {
 	std::pair<bool, int> able = check_general_movement(location, gamestate, player, destination);
 	if (!able.first) return false;
-	int x = location.first, y = location.second;
-	int newX = destination.first, newY = destination.second;
+	int x = location.x, y = location.y;
+	int newX = destination.x, newY = destination.y;
 
 	gamestate.board[newX][newY].generals = gamestate.board[x][y].generals;
 	gamestate.board[newX][newY].generals->position = {newX, newY};
@@ -315,18 +315,18 @@ bool general_move(const std::pair<int, int>& location, GameState &gamestate, int
 }
 
 // 用于处理军队突袭
-/* ### `bool army_rush(std::pair<int, int> location, GameState &gamestate, int player, std::pair<int, int> destination)`
+/* ### `bool army_rush(const Coord& location, GameState &gamestate, int player, const Coord& destination)`
 
 * 描述：处理军队突袭技能（注，此函数不检查合法性）。
 * 参数：
-  * `std::pair<int, int> location`：当前位置。
+  * `const Coord& location`：当前位置。
   * `GameState &gamestate`：游戏状态对象的引用。
   * `int player`：执行技能的玩家编号。
-  * `std::pair<int, int> destination`：目标位置。
+  * `const Coord& destination`：目标位置。
 * 返回值：如果处理成功，返回 `true`；否则返回 `false`。 */
-bool army_rush(std::pair<int, int> location, GameState &gamestate, int player, std::pair<int, int> destination) {
-	int x = location.first, y = location.second;			   // 获取当前位置
-	int new_x = destination.first, new_y = destination.second; // 获取目标位置
+bool army_rush(const Coord& location, GameState &gamestate, int player, const Coord& destination) {
+	int x = location.x, y = location.y;			   // 获取当前位置
+	int new_x = destination.x, new_y = destination.y; // 获取目标位置
 	int num = gamestate.board[x][y].army - 1;				   // 计算移动的军队数量
 
 	// 如果目标位置没有玩家
@@ -354,18 +354,18 @@ bool army_rush(std::pair<int, int> location, GameState &gamestate, int player, s
 }
 
 // 检查军队突袭参数
-/* ### `bool check_rush_param(int player, std::pair<int, int> destination, std::pair<int, int> location, GameState &gamestate)`
+/* ### `bool check_rush_param(int player, const Coord& destination, const Coord& location, GameState &gamestate)`
 
 * 描述：检查军队突袭技能参数的合法性。
 * 参数：
   * `int player`：执行技能的玩家编号。
-  * `std::pair<int, int> destination`：目标位置。
-  * `std::pair<int, int> location`：当前位置。
+  * `const Coord& destination`：目标位置。
+  * `const Coord& location`：当前位置。
   * `GameState &gamestate`：游戏状态对象的引用。
 * 返回值：如果参数合法，返回 `true`；否则返回 `false`。 */
-bool check_rush_param(int player, std::pair<int, int> destination, std::pair<int, int> location, GameState &gamestate) {
-	int x = location.first, y = location.second;			   // 获取当前位置
-	int x_new = destination.first, y_new = destination.second; // 获取目标位置
+bool check_rush_param(int player, const Coord& destination, const Coord& location, GameState &gamestate) {
+	int x = location.x, y = location.y;			   // 获取当前位置
+	int x_new = destination.x, y_new = destination.y; // 获取目标位置
 
 	// 检查参数合理性
 	if (gamestate.board[x][y].generals == nullptr) return false; // 如果当前位置没有将军，返回失败
@@ -383,15 +383,15 @@ bool check_rush_param(int player, std::pair<int, int> destination, std::pair<int
 }
 
 // 处理突破
-/* ### `bool handle_breakthrough(std::pair<int, int> destination, GameState &gamestate)`
+/* ### `bool handle_breakthrough(const Coord& destination, GameState &gamestate)`
 
 * 描述：处理突破技能（注，此函数不检查合法性）。
 * 参数：
-  * `std::pair<int, int> destination`：目标位置。
+  * `const Coord& destination`：目标位置。
   * `GameState &gamestate`：游戏状态对象的引用。
 * 返回值：如果处理成功，返回 `true`；否则返回 `false`。 */
-bool handle_breakthrough(std::pair<int, int> destination, GameState &gamestate) {
-	int x = destination.first, y = destination.second; // 获取目标位置
+bool handle_breakthrough(const Coord& destination, GameState &gamestate) {
+	int x = destination.x, y = destination.y; // 获取目标位置
 
 	// 如果目标位置的军队数量大于20
 	if (gamestate.board[x][y].army > Constant::STRIKE_DAMAGE)
@@ -404,25 +404,24 @@ bool handle_breakthrough(std::pair<int, int> destination, GameState &gamestate) 
 	return true; // 返回成功
 }
 
-/* ### `bool skill_activate(int player, std::pair<int, int> location, std::pair<int, int> destination, GameState &gamestate, SkillType skillType)`
+/* ### `bool skill_activate(int player, const Coord& location, const Coord& destination, GameState &gamestate, SkillType skillType)`
 
 * 描述：激活将军技能。
 * 参数：
   * `int player`：执行技能的玩家编号。
-  * `std::pair<int, int> location`：将军当前位置。
-  * `std::pair<int, int> destination`：目标位置。
+  * `const Coord& location`：将军当前位置。
+  * `const Coord& destination`：目标位置。
   * `GameState &gamestate`：游戏状态对象的引用。
   * `SkillType skillType`：要激活的技能类型。
 * 返回值：如果激活成功，返回 `true`；否则返回 `false`。 */
-bool skill_activate(int player, std::pair<int, int> location, std::pair<int, int> destination, GameState &gamestate, SkillType skillType)
-{
+bool skill_activate(int player, const Coord& location, const Coord& destination, GameState &gamestate, SkillType skillType) {
 	// 检查参数范围
 	if (player != 0 && player != 1) return false; // 如果玩家参数不是0或1，则返回false
-	int x = location.first, y = location.second;
+	int x = location.x, y = location.y;
 	if (x < 0 || x > Constant::row || y < 0 || y > Constant::col) return false; // 如果位置坐标超出范围，则返回false
 
-	if (destination == std::pair<int, int>{-1, -1}) {
-		int x_new = destination.first, y_new = destination.second;
+	if (destination == Coord{-1, -1}) {
+		int x_new = destination.x, y_new = destination.y;
 		if (x_new < 0 || x_new > Constant::row || y_new < 0 || y_new > Constant::col) return false; // 如果目的地坐标超出范围，则返回false
 		int d1 = std::abs(x_new - x);
 		int d2 = std::abs(y_new - y);
@@ -432,13 +431,13 @@ bool skill_activate(int player, std::pair<int, int> location, std::pair<int, int
 	// 检查参数合理性
 	if (gamestate.board[x][y].player != player) return false; // 如果指定位置上的玩家不是当前玩家，则返回false
 	int coin = gamestate.coin[player];
-	Generals *general = gamestate.board[location.first][location.second].generals;
+	Generals *general = gamestate.board[location.x][location.y].generals;
 	if (general == nullptr) return false; // 如果指定位置上没有将领，则返回false
 
 	// 超级武器效果
 	for (SuperWeapon &sw : gamestate.active_super_weapon) {
 		if (sw.position == location && sw.rest && sw.type == WeaponType::TRANSMISSION) return false; // 超时空传送眩晕
-		if (std::abs(sw.position.first - x) <= 1 && std::abs(sw.position.second - y) <= 1 && sw.rest && sw.type == WeaponType::TIME_STOP)
+		if (std::abs(sw.position.x - x) <= 1 && std::abs(sw.position.y - y) <= 1 && sw.rest && sw.type == WeaponType::TIME_STOP)
 			return false; // 时间暂停效果
 	}
 
@@ -465,7 +464,7 @@ bool skill_activate(int player, std::pair<int, int> location, std::pair<int, int
 		if (coin >= Constant::leadership && general->skills_cd[2] == 0) {
 			general->skills_cd[2] = 10;
 			general->skill_duration[0] = 10;
-			gamestate.board[location.first][location.second].generals = general;
+			gamestate.board[location.x][location.y].generals = general;
 			gamestate.coin[player] -= Constant::leadership;
 			return true; // 如果满足使用指挥技能的条件，则返回true
 		}
@@ -474,7 +473,7 @@ bool skill_activate(int player, std::pair<int, int> location, std::pair<int, int
 		if (coin >= Constant::fortification && general->skills_cd[3] == 0) {
 			general->skills_cd[3] = 10;
 			general->skill_duration[1] = 10;
-			gamestate.board[location.first][location.second].generals = general;
+			gamestate.board[location.x][location.y].generals = general;
 			gamestate.coin[player] -= Constant::fortification;
 			return true; // 如果满足使用防御技能的条件，则返回true
 		}
@@ -483,7 +482,7 @@ bool skill_activate(int player, std::pair<int, int> location, std::pair<int, int
 		if (coin >= Constant::weakening && general->skills_cd[4] == 0) {
 			general->skills_cd[4] = 10;
 			general->skill_duration[2] = 10;
-			gamestate.board[location.first][location.second].generals = general;
+			gamestate.board[location.x][location.y].generals = general;
 			gamestate.coin[player] -= Constant::weakening;
 			return true; // 如果满足使用削弱技能的条件，则返回true
 		}
@@ -512,7 +511,7 @@ bool handle_bomb_cell(GameState &gamestate, int x, int y) {
 		auto it = gamestate.generals.begin();
 		// 从将军列表中移除该将军
 		while (it != gamestate.generals.end()) {
-			if (it->position == std::pair<int, int>{x, y}) {
+			if (it->position == Coord{x, y}) {
 				it = gamestate.generals.erase(it);
 				break;
 			}
@@ -522,19 +521,19 @@ bool handle_bomb_cell(GameState &gamestate, int x, int y) {
 	return true;
 }
 // 处理炸弹的函数
-/* ### `bool handle_bomb(GameState &gamestate, const std::pair<int, int> &location)`
+/* ### `bool handle_bomb(GameState &gamestate, const Coord &location)`
 
 * 描述：处理使用炸弹的操作，触发炸弹效果。
 * 参数：
   * `GameState &gamestate`：游戏状态对象的引用。
-  * `const std::pair<int, int> &location`：炸弹爆炸的位置。
+  * `const Coord& location`：炸弹爆炸的位置。
 * 返回值：如果处理成功，返回 `true`；否则返回 `false`。 */
-bool handle_bomb(GameState &gamestate, const std::pair<int, int> &location) {
+bool handle_bomb(GameState &gamestate, const Coord& location) {
 	// 遍历目标位置周围的单元格
 	for (int i = -1; i <= 1; i++) {
 		for (int j = -1; j <= 1; j++) {
-			int x = location.first + i;
-			int y = location.second + j;
+			int x = location.x + i;
+			int y = location.y + j;
 			// 如果单元格在棋盘内，处理该单元格
 			if (x >= 0 && x < Constant::row && y >= 0 && y < Constant::col) handle_bomb_cell(gamestate, x, y);
 		}
@@ -543,19 +542,19 @@ bool handle_bomb(GameState &gamestate, const std::pair<int, int> &location) {
 }
 
 // 使用炸弹的函数
-/* ### `bool bomb(GameState &gamestate, const std::pair<int, int> location, int player)`
+/* ### `bool bomb(GameState &gamestate, const Coord& location, int player)`
 
 * 描述：激活炸弹超级武器。
 * 参数：
   * `GameState &gamestate`：游戏状态对象的引用。
-  * `const std::pair<int, int> location`：炸弹爆炸的位置。
+  * `const Coord& location`：炸弹爆炸的位置。
   * `int player`：执行操作的玩家编号。
 * 返回值：如果激活成功，返回 `true`；否则返回 `false`。 */
-bool bomb(GameState &gamestate, const std::pair<int, int> location, int player) {
+bool bomb(GameState &gamestate, const Coord& location, int player) {
 	// 检查玩家和位置的有效性
 	if (player != 0 && player != 1) return false;
-	if (location.first < 0 || location.first > Constant::row) return false;
-	if (location.second < 0 || location.second > Constant::col) return false;
+	if (location.x < 0 || location.x > Constant::row) return false;
+	if (location.y < 0 || location.y > Constant::col) return false;
 
 	// 检查超级武器是否解锁并且冷却时间为0
 	bool is_super_weapon_unlocked = gamestate.super_weapon_unlocked[player];
@@ -573,19 +572,19 @@ bool bomb(GameState &gamestate, const std::pair<int, int> location, int player) 
 }
 
 // 强化的函数
-/* ### `bool strengthen(GameState &gamestate, std::pair<int, int> location, int player)`
+/* ### `bool strengthen(GameState &gamestate, const Coord& location, int player)`
 
 * 描述：激活强化超级武器。
 * 参数：
   * `GameState &gamestate`：游戏状态对象的引用。
-  * `std::pair<int, int> location`：超级武器激活的位置。
+  * `const Coord& location`：超级武器激活的位置。
   * `int player`：执行操作的玩家编号。
 * 返回值：如果激活成功，返回 `true`；否则返回 `false`。 */
-bool strengthen(GameState &gamestate, std::pair<int, int> location, int player) {
+bool strengthen(GameState &gamestate, const Coord& location, int player) {
 	// 检查玩家和位置的有效性
 	if (player != 0 && player != 1) return false;
-	if (location.first < 0 || location.first > Constant::row) return false;
-	if (location.second < 0 || location.second > Constant::col) return false;
+	if (location.x < 0 || location.x > Constant::row) return false;
+	if (location.y < 0 || location.y > Constant::col) return false;
 
 	// 检查超级武器是否解锁并且冷却时间为0
 	bool is_super_weapon_unlocked = gamestate.super_weapon_unlocked[player];
@@ -609,24 +608,24 @@ bool strengthen(GameState &gamestate, std::pair<int, int> location, int player) 
  * @param player 玩家编号
  * @return 如果传送操作成功，则返回true；否则返回false。
  */
-bool tp(GameState &gamestate, const std::pair<int, int> start, const std::pair<int, int> to, int player) {
+bool tp(GameState &gamestate, const Coord& start, const Coord& to, int player) {
 	// 检查玩家编号是否有效
 	if (player != 0 && player != 1) return false;
 
 	// 检查起始位置的坐标是否有效
-	if (start.first < 0 || start.first > Constant::row || start.second < 0 || start.second > Constant::col) return false;
+	if (start.x < 0 || start.x > Constant::row || start.y < 0 || start.y > Constant::col) return false;
 
 	// 检查目标位置的坐标是否有效
-	if (to.first < 0 || to.first > Constant::row || to.second < 0 || to.second > Constant::col) return false;
+	if (to.x < 0 || to.x > Constant::row || to.y < 0 || to.y > Constant::col) return false;
 
 	// 检查是否已解锁超级武器并且冷却时间为0
 	bool is_super_weapon_unlocked = gamestate.super_weapon_unlocked[player];
 	int cd = gamestate.super_weapon_cd[player];
 	if (is_super_weapon_unlocked && cd == 0) {
-		int x_st = start.first;
-		int y_st = start.second;
-		int x_to = to.first;
-		int y_to = to.second;
+		int x_st = start.x;
+		int y_st = start.y;
+		int x_to = to.x;
+		int y_to = to.y;
 		Cell cell_st = gamestate.board[x_st][y_st];
 		Cell cell_to = gamestate.board[x_to][y_to];
 
@@ -662,13 +661,13 @@ bool tp(GameState &gamestate, const std::pair<int, int> start, const std::pair<i
  * @param player 玩家编号
  * @return 如果时间停止操作成功，则返回true；否则返回false。
  */
-bool timestop(GameState &gamestate, const std::pair<int, int> location, int player) {
+bool timestop(GameState &gamestate, const Coord& location, int player) {
 	// 检查玩家编号是否有效
 	if (player != 0 && player != 1) return false;
 
 	// 检查冻结位置的坐标是否有效
-	int x = location.first;
-	int y = location.second;
+	int x = location.x;
+	int y = location.y;
 	if (x < 0 || x > Constant::row || y < 0 || y > Constant::col) return false;
 
 	// 检查是否已解锁超级武器并且冷却时间为0
@@ -682,48 +681,48 @@ bool timestop(GameState &gamestate, const std::pair<int, int> location, int play
 	return false;
 }
 
-/* ### `bool production_up(std::pair<int, int> location, GameState &gamestate, int player)`
+/* ### `bool production_up(const Coord& location, GameState &gamestate, int player)`
 
 * 描述：执行将军生产力升级。
 * 参数：
-  * `std::pair<int, int> location`：升级将军位置的坐标。
+  * `const Coord& location`：升级将军位置的坐标。
   * `GameState &gamestate`：游戏状态对象的引用。
   * `int player`：执行操作的玩家编号。
 * 返回值：如果技术升级成功，返回 `true`；否则返回 `false`。 */
-bool production_up(std::pair<int, int> location, GameState &gamestate, int player) {
-	Cell& cell = gamestate.board[location.first][location.second];
+bool production_up(const Coord& location, GameState &gamestate, int player) {
+	Cell& cell = gamestate.board[location.x][location.y];
 	if (cell.generals == nullptr) return false;
 	if (cell.player != player) return false;
 
 	return cell.generals->production_up(location, gamestate, player);
 }
 
-/* ### `bool defence_up(std::pair<int, int> location, GameState &gamestate, int player)`
+/* ### `bool defence_up(const Coord& location, GameState &gamestate, int player)`
 
 * 描述：执行将军防御力升级。
 * 参数：
-  * `std::pair<int, int> location`：升级将军位置的坐标。
+  * `const Coord& location`：升级将军位置的坐标。
   * `GameState &gamestate`：游戏状态对象的引用。
   * `int player`：执行操作的玩家编号。
 * 返回值：如果技术升级成功，返回 `true`；否则返回 `false`。 */
-bool defence_up(std::pair<int, int> location, GameState &gamestate, int player) {
-	Cell& cell = gamestate.board[location.first][location.second];
+bool defence_up(const Coord& location, GameState &gamestate, int player) {
+	Cell& cell = gamestate.board[location.x][location.y];
 	if (cell.generals == nullptr) return false;
 	if (cell.player != player) return false;
 
 	return cell.generals->defence_up(location, gamestate, player);
 }
 
-/* ### `bool movement_up(std::pair<int, int> location, GameState &gamestate, int player)`
+/* ### `bool movement_up(const Coord& location, GameState &gamestate, int player)`
 
 * 描述：执行将军移动力升级。
 * 参数：
-  * `std::pair<int, int> location`：升级将军位置的坐标。
+  * `const Coord& location`：升级将军位置的坐标。
   * `GameState &gamestate`：游戏状态对象的引用。
   * `int player`：执行操作的玩家编号。
 * 返回值：如果技术升级成功，返回 `true`；否则返回 `false`。 */
-bool movement_up(std::pair<int, int> location, GameState &gamestate, int player) {
-	Cell& cell = gamestate.board[location.first][location.second];
+bool movement_up(const Coord& location, GameState &gamestate, int player) {
+	Cell& cell = gamestate.board[location.x][location.y];
 	if (cell.generals == nullptr) return false;
 	if (cell.player != player) return false;
 

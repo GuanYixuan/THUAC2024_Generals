@@ -50,8 +50,8 @@ void show_map(GameState state, string file_name)
         f << element.id << " ";
         f << typenow << " ";
         f << element.player << " ";
-        f << element.position.first << " ";
-        f << element.position.second << "\n";
+        f << element.position.x << " ";
+        f << element.position.y << "\n";
     }
     // close the file
     f.close();

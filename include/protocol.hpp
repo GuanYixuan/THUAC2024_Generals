@@ -27,10 +27,9 @@ std::tuple<int, GameState> read_init_map()
         x = int(map[i][0][0]);
         y = int(map[i][0][1]);
         gamestate.board[x][y].type = CellType(int(types[i + 1]) - '0');
-        // std::cerr << "cell" << x << "," << y << "has type" << int(types[i + 1]) - '0' << std::endl;
         gamestate.board[x][y].player = int(map[i][1]);
         gamestate.board[x][y].army = int(map[i][2]);
-        gamestate.board[x][y].position.first = x, gamestate.board[x][y].position.second = y;
+        gamestate.board[x][y].position = Coord(x, y);
     }
     for (int i = 0; i < generals.size(); ++i)
     {

@@ -1,13 +1,30 @@
 #pragma once
 #include <vector>
 #include <string>
-#include <random>
 #include <iostream>
 #include <cmath>
-#include<algorithm>
+#include <algorithm>
 #include "constant.hpp"
 
 class GameState;
+
+// 坐标类
+class Coord {
+public:
+    int x;
+    int y;
+
+    Coord() noexcept = default;
+    Coord(int x, int y) noexcept : x(x), y(y) {};
+    Coord(const std::pair<int, int>& pos) noexcept : x(pos.first), y(pos.second) {};
+    operator std::pair<int, int>() const noexcept { return std::make_pair(x, y); }
+
+    // 比较与算术运算
+    bool operator==(const Coord& other) const noexcept { return x == other.x && y == other.y; }
+    bool operator!=(const Coord& other) const noexcept { return x != other.x || y != other.y; }
+    Coord operator+(const Coord& other) const noexcept { return Coord(x + other.x, y + other.y); }
+    Coord operator-(const Coord& other) const noexcept { return Coord(x - other.x, y - other.y); }
+};
 
 // 将军技能类型
 enum class SkillType {
@@ -68,8 +85,8 @@ struct SuperWeapon {
     int player = -1; // 所属玩家
     int cd = 0; // 冷却回合数
     int rest = 0;// 效果剩余回合数
-    std::pair<int,int> position = {0, 0}; // 位置坐标
-    SuperWeapon(WeaponType type, int player, int cd, int rest, std::pair<int,int> position):type(type), player(player), cd(cd), rest(rest), position(position){};
+    Coord position = {0, 0}; // 位置坐标
+    SuperWeapon(WeaponType type, int player, int cd, int rest, Coord position):type(type), player(player), cd(cd), rest(rest), position(position){};
 };
 
 // 将军基类
@@ -80,14 +97,14 @@ class Generals {
     int produce_level = 1; // 生产力等级
     int defence_level = 1; // 防御力等级
     int mobility_level = 1; //移动力等级
-    std::pair<int,int> position = {0,0}; // 位置坐标
+    Coord position = {0,0}; // 位置坐标
     std::vector<int> skills_cd = {0, 0, 0, 0, 0}; // 技能冷却回合数列表
     std::vector<int> skill_duration = {0, 0, 0}; // 技能持续回合数列表
     int rest_move = 1; // 剩余移动步数
-    virtual bool production_up(std::pair<int,int> location,GameState &gamestate, int player){return false;} // 提升生产力
-    virtual bool defence_up(std::pair<int,int> location,GameState &gamestate, int player) {return false;} // 提升防御力
-    virtual bool movement_up(std::pair<int, int> location, GameState &gamestate, int player) { return false;} // 提升移动力
-    Generals(int id,int player,std::pair<int,int> position):
+    virtual bool production_up(Coord location,GameState &gamestate, int player){return false;} // 提升生产力
+    virtual bool defence_up(Coord location,GameState &gamestate, int player) {return false;} // 提升防御力
+    virtual bool movement_up(Coord location, GameState &gamestate, int player) { return false;} // 提升移动力
+    Generals(int id,int player,Coord position):
         id(id),player(player),position(position){};
 };
 
@@ -96,10 +113,10 @@ class OilWell :public Generals {
     public:
         int mobility_level = 0;
         float defence_level=1.0f;
-        virtual bool production_up(std::pair<int,int> location,GameState &gamestate, int player);
-        virtual bool defence_up(std::pair<int,int> location,GameState &gamestate, int player);
-        virtual bool movement_up(std::pair<int,int> location,GameState &gamestate, int player);
-        OilWell(int id,int player,std::pair<int,int> position):Generals(id,player,position){};
+        virtual bool production_up(Coord location,GameState &gamestate, int player);
+        virtual bool defence_up(Coord location,GameState &gamestate, int player);
+        virtual bool movement_up(Coord location,GameState &gamestate, int player);
+        OilWell(int id,int player,Coord position):Generals(id,player,position){};
 };
 
 // 主将类，继承自将军基类
@@ -112,10 +129,10 @@ class MainGenerals :public Generals {
         {SkillType::DEFENCE, 10},
         {SkillType::WEAKEN, 10}
     };
-    virtual bool production_up(std::pair<int,int> location,GameState &gamestate, int player);
-    virtual bool defence_up(std::pair<int,int> location,GameState &gamestate, int player);
-    virtual bool movement_up(std::pair<int,int> location,GameState &gamestate, int player);
-    MainGenerals(int id,int player,std::pair<int,int> position):Generals(id,player,position){};
+    virtual bool production_up(Coord location,GameState &gamestate, int player);
+    virtual bool defence_up(Coord location,GameState &gamestate, int player);
+    virtual bool movement_up(Coord location,GameState &gamestate, int player);
+    MainGenerals(int id,int player,Coord position):Generals(id,player,position){};
 };
 
 // 副将类，继承自将军基类
@@ -129,17 +146,17 @@ class SubGenerals :public Generals {
         {SkillType::DEFENCE, 10},
         {SkillType::WEAKEN, 10}
     };
-    virtual bool production_up(std::pair<int,int> location,GameState &gamestate, int player);
-    virtual bool defence_up(std::pair<int,int> location,GameState &gamestate, int player);
-    virtual bool movement_up(std::pair<int,int> location,GameState &gamestate, int player);
-    SubGenerals(int id,int player,std::pair<int,int> position):
+    virtual bool production_up(Coord location,GameState &gamestate, int player);
+    virtual bool defence_up(Coord location,GameState &gamestate, int player);
+    virtual bool movement_up(Coord location,GameState &gamestate, int player);
+    SubGenerals(int id,int player,Coord position):
         Generals(id,player,position){};
 };
 
 // 格子类
 class Cell {
     public:
-    std::pair<int,int> position = {0,0};  // 格子的位置坐标
+    Coord position = {0,0};  // 格子的位置坐标
     CellType type=CellType::PLAIN; // 格子的类型
     int player = -1;  // 控制格子的玩家编号
     Generals* generals = nullptr;  // 格子上的将军对象指针
@@ -165,13 +182,13 @@ public:
     int next_generals_id = 0;
     int winner = -1;
 
-    std::pair<int,int> find_general_position_by_id(int general_id) {
+    Coord find_general_position_by_id(int general_id) {
         for (Generals& gen : generals) {
             if (gen.id == general_id) {
                 return gen.position;
             }
         }
-        return std::pair<int,int>(-1,-1);
+        return Coord(-1,-1);
     }//寻找将军id对应的格子，找不到返回(-1,-1)
     void update_round();
 };
@@ -215,8 +232,8 @@ void GameState::update_round()
     // 超级武器判定
     for (auto &weapon : this->active_super_weapon) {
         if (weapon.type == WeaponType(0)) {
-            for (int _i = std::max(0, weapon.position.first - 1); _i < std::min(Constant::row, weapon.position.first + 1); ++_i) {
-                for (int _j = std::max(0, weapon.position.second - 1); _j < std::min(Constant::col, weapon.position.second + 1); ++_j) {
+            for (int _i = std::max(0, weapon.position.x - 1); _i < std::min(Constant::row, weapon.position.x + 1); ++_i) {
+                for (int _j = std::max(0, weapon.position.y - 1); _j < std::min(Constant::col, weapon.position.y + 1); ++_j) {
                     if (this->board[_i][_j].army > 0) {
                         this->board[_i][_j].army = std::max(0, this->board[_i][_j].army - 3);
                         if (this->board[_i][_j].army == 0 && this->board[_i][_j].generals == nullptr) {
@@ -268,10 +285,10 @@ void GameState::update_round()
     ++this->round;
 }
 
-bool MainGenerals::production_up(std::pair<int, int> location, GameState &gamestate, int player)
+bool MainGenerals::production_up(Coord location, GameState &gamestate, int player)
 {
   // 获取将军的生产等级
-  int level = gamestate.board[location.first][location.second].generals->produce_level;
+  int level = gamestate.board[location.x][location.y].generals->produce_level;
   // 根据生产等级选择不同的操作
   switch (level)
   {
@@ -284,7 +301,7 @@ bool MainGenerals::production_up(std::pair<int, int> location, GameState &gamest
     else
     {
       // 金币足够，提升生产等级为2
-      gamestate.board[location.first][location.second].generals->produce_level = 2;
+      gamestate.board[location.x][location.y].generals->produce_level = 2;
       // 扣除相应的金币
       gamestate.coin[player] -= Constant::lieutenant_production_T1 / 2;
       return true; // 返回true
@@ -299,7 +316,7 @@ bool MainGenerals::production_up(std::pair<int, int> location, GameState &gamest
     else
     {
       // 金币足够，提升生产等级为4
-      gamestate.board[location.first][location.second].generals->produce_level = 4;
+      gamestate.board[location.x][location.y].generals->produce_level = 4;
       // 扣除相应的金币
       gamestate.coin[player] -= Constant::lieutenant_production_T2 / 2;
       return true; // 返回true
@@ -310,9 +327,9 @@ bool MainGenerals::production_up(std::pair<int, int> location, GameState &gamest
   }
 }
 
-bool MainGenerals::defence_up(std::pair<int, int> location, GameState &gamestate, int player)
+bool MainGenerals::defence_up(Coord location, GameState &gamestate, int player)
 {
-  switch (gamestate.board[location.first][location.second].generals->defence_level)
+  switch (gamestate.board[location.x][location.y].generals->defence_level)
   {
   case 1:
     if (gamestate.coin[player] < Constant::general_movement_T1 / 2)
@@ -321,7 +338,7 @@ bool MainGenerals::defence_up(std::pair<int, int> location, GameState &gamestate
     }
     else
     {
-      gamestate.board[location.first][location.second].generals->defence_level = 2;
+      gamestate.board[location.x][location.y].generals->defence_level = 2;
       gamestate.coin[player] -= Constant::general_movement_T1 / 2;
     }
     break;
@@ -332,7 +349,7 @@ bool MainGenerals::defence_up(std::pair<int, int> location, GameState &gamestate
     }
     else
     {
-      gamestate.board[location.first][location.second].generals->defence_level = 3;
+      gamestate.board[location.x][location.y].generals->defence_level = 3;
       gamestate.coin[player] -= Constant::lieutenant_defense_T2 / 2;
     }
     break;
@@ -342,9 +359,9 @@ bool MainGenerals::defence_up(std::pair<int, int> location, GameState &gamestate
   return true;
 }
 
-bool MainGenerals::movement_up(std::pair<int, int> location, GameState &gamestate, int player)
+bool MainGenerals::movement_up(Coord location, GameState &gamestate, int player)
 {
-  switch (gamestate.board[location.first][location.second].generals->mobility_level)
+  switch (gamestate.board[location.x][location.y].generals->mobility_level)
   {
   case 1:
     if (gamestate.coin[player] < Constant::general_movement_T1 / 2)
@@ -353,7 +370,7 @@ bool MainGenerals::movement_up(std::pair<int, int> location, GameState &gamestat
     }
     else
     {
-      gamestate.board[location.first][location.second].generals->mobility_level = 2;
+      gamestate.board[location.x][location.y].generals->mobility_level = 2;
       gamestate.coin[player] -= Constant::general_movement_T1 / 2;
     }
     break;
@@ -364,7 +381,7 @@ bool MainGenerals::movement_up(std::pair<int, int> location, GameState &gamestat
     }
     else
     {
-      gamestate.board[location.first][location.second].generals->mobility_level = 4;
+      gamestate.board[location.x][location.y].generals->mobility_level = 4;
       gamestate.coin[player] -= Constant::general_movement_T2 / 2;
     }
     break;
@@ -374,9 +391,9 @@ bool MainGenerals::movement_up(std::pair<int, int> location, GameState &gamestat
   return true;
 }
 
-bool SubGenerals::production_up(std::pair<int, int> location, GameState &gamestate, int player)
+bool SubGenerals::production_up(Coord location, GameState &gamestate, int player)
 {
-  switch (gamestate.board[location.first][location.second].generals->produce_level)
+  switch (gamestate.board[location.x][location.y].generals->produce_level)
   {
   case 1:
     if (gamestate.coin[player] < Constant::lieutenant_production_T1)
@@ -385,7 +402,7 @@ bool SubGenerals::production_up(std::pair<int, int> location, GameState &gamesta
     }
     else
     {
-      gamestate.board[location.first][location.second].generals->produce_level = 2;
+      gamestate.board[location.x][location.y].generals->produce_level = 2;
       gamestate.coin[player] -= Constant::lieutenant_production_T1;
     }
     break;
@@ -396,7 +413,7 @@ bool SubGenerals::production_up(std::pair<int, int> location, GameState &gamesta
     }
     else
     {
-      gamestate.board[location.first][location.second].generals->produce_level = 4;
+      gamestate.board[location.x][location.y].generals->produce_level = 4;
       gamestate.coin[player] -= Constant::lieutenant_production_T2;
     }
     break;
@@ -406,9 +423,9 @@ bool SubGenerals::production_up(std::pair<int, int> location, GameState &gamesta
   return true;
 }
 
-bool SubGenerals::defence_up(std::pair<int, int> location, GameState &gamestate, int player)
+bool SubGenerals::defence_up(Coord location, GameState &gamestate, int player)
 {
-  switch (gamestate.board[location.first][location.second].generals->defence_level)
+  switch (gamestate.board[location.x][location.y].generals->defence_level)
   {
   case 1:
     if (gamestate.coin[player] < Constant::general_movement_T1 / 2)
@@ -417,7 +434,7 @@ bool SubGenerals::defence_up(std::pair<int, int> location, GameState &gamestate,
     }
     else
     {
-      gamestate.board[location.first][location.second].generals->defence_level = 2;
+      gamestate.board[location.x][location.y].generals->defence_level = 2;
       gamestate.coin[player] -= Constant::general_movement_T1 / 2;
     }
     break;
@@ -428,7 +445,7 @@ bool SubGenerals::defence_up(std::pair<int, int> location, GameState &gamestate,
     }
     else
     {
-      gamestate.board[location.first][location.second].generals->defence_level = 3;
+      gamestate.board[location.x][location.y].generals->defence_level = 3;
       gamestate.coin[player] -= Constant::lieutenant_defense_T2 / 2;
     }
     break;
@@ -438,9 +455,9 @@ bool SubGenerals::defence_up(std::pair<int, int> location, GameState &gamestate,
   return true;
 }
 
-bool SubGenerals::movement_up(std::pair<int, int> location, GameState &gamestate, int player)
+bool SubGenerals::movement_up(Coord location, GameState &gamestate, int player)
 {
-  switch (gamestate.board[location.first][location.second].generals->mobility_level)
+  switch (gamestate.board[location.x][location.y].generals->mobility_level)
   {
   case 1:
     if (gamestate.coin[player] < Constant::general_movement_T1)
@@ -449,7 +466,7 @@ bool SubGenerals::movement_up(std::pair<int, int> location, GameState &gamestate
     }
     else
     {
-      gamestate.board[location.first][location.second].generals->mobility_level = 2;
+      gamestate.board[location.x][location.y].generals->mobility_level = 2;
       gamestate.coin[player] -= Constant::general_movement_T1;
     }
     break;
@@ -460,7 +477,7 @@ bool SubGenerals::movement_up(std::pair<int, int> location, GameState &gamestate
     }
     else
     {
-      gamestate.board[location.first][location.second].generals->mobility_level = 4;
+      gamestate.board[location.x][location.y].generals->mobility_level = 4;
       gamestate.coin[player] -= Constant::general_movement_T2;
     }
     break;
@@ -470,9 +487,9 @@ bool SubGenerals::movement_up(std::pair<int, int> location, GameState &gamestate
   return true;
 }
 
-bool OilWell::production_up(std::pair<int, int> location, GameState &gamestate, int player)
+bool OilWell::production_up(Coord location, GameState &gamestate, int player)
 {
-  switch (gamestate.board[location.first][location.second].generals->produce_level)
+  switch (gamestate.board[location.x][location.y].generals->produce_level)
   {
   case 1:
     if (gamestate.coin[player] < Constant::OilWell_production_T1)
@@ -481,7 +498,7 @@ bool OilWell::production_up(std::pair<int, int> location, GameState &gamestate, 
     }
     else
     {
-      gamestate.board[location.first][location.second].generals->produce_level = 2;
+      gamestate.board[location.x][location.y].generals->produce_level = 2;
       gamestate.coin[player] -= Constant::OilWell_production_T1;
     }
     break;
@@ -492,7 +509,7 @@ bool OilWell::production_up(std::pair<int, int> location, GameState &gamestate, 
     }
     else
     {
-      gamestate.board[location.first][location.second].generals->produce_level = 4;
+      gamestate.board[location.x][location.y].generals->produce_level = 4;
       gamestate.coin[player] -= Constant::OilWell_production_T2;
     }
     break;
@@ -503,7 +520,7 @@ bool OilWell::production_up(std::pair<int, int> location, GameState &gamestate, 
     }
     else
     {
-      gamestate.board[location.first][location.second].generals->produce_level = 6;
+      gamestate.board[location.x][location.y].generals->produce_level = 6;
       gamestate.coin[player] -= Constant::OilWell_production_T3;
     }
     break;
@@ -513,9 +530,9 @@ bool OilWell::production_up(std::pair<int, int> location, GameState &gamestate, 
   return true;
 }
 
-bool OilWell::defence_up(std::pair<int, int> location, GameState &gamestate, int player)
+bool OilWell::defence_up(Coord location, GameState &gamestate, int player)
 {
-  if (gamestate.board[location.first][location.second].generals->defence_level == 1)
+  if (gamestate.board[location.x][location.y].generals->defence_level == 1)
   {
     if (gamestate.coin[player] < Constant::OilWell_defense_T1)
     {
@@ -523,11 +540,11 @@ bool OilWell::defence_up(std::pair<int, int> location, GameState &gamestate, int
     }
     else
     {
-      gamestate.board[location.first][location.second].generals->defence_level = 1.5;
+      gamestate.board[location.x][location.y].generals->defence_level = 1.5;
       gamestate.coin[player] -= Constant::OilWell_defense_T1;
     }
   }
-  else if (gamestate.board[location.first][location.second].generals->defence_level == 1.5)
+  else if (gamestate.board[location.x][location.y].generals->defence_level == 1.5)
   {
     if (gamestate.coin[player] < Constant::OilWell_defense_T2)
     {
@@ -535,11 +552,11 @@ bool OilWell::defence_up(std::pair<int, int> location, GameState &gamestate, int
     }
     else
     {
-      gamestate.board[location.first][location.second].generals->defence_level = 2;
+      gamestate.board[location.x][location.y].generals->defence_level = 2;
       gamestate.coin[player] -= Constant::OilWell_defense_T2;
     }
   }
-  else if (gamestate.board[location.first][location.second].generals->defence_level == 2)
+  else if (gamestate.board[location.x][location.y].generals->defence_level == 2)
   {
     if (gamestate.coin[player] < Constant::OilWell_defense_T3)
     {
@@ -547,7 +564,7 @@ bool OilWell::defence_up(std::pair<int, int> location, GameState &gamestate, int
     }
     else
     {
-      gamestate.board[location.first][location.second].generals->defence_level = 3;
+      gamestate.board[location.x][location.y].generals->defence_level = 3;
       gamestate.coin[player] -= Constant::OilWell_defense_T3;
     }
   }
@@ -557,7 +574,7 @@ bool OilWell::defence_up(std::pair<int, int> location, GameState &gamestate, int
   }
   return true;
 }
-bool OilWell::movement_up(std::pair<int, int> location, GameState &gamestate, int player)
+bool OilWell::movement_up(Coord location, GameState &gamestate, int player)
 {
   return false;
 }

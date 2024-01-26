@@ -69,8 +69,7 @@ bool GameController::execute_single_command(int player, const Operation &op)
         // 移动将军
         int id = params[0];
         auto pos = game_state.find_general_position_by_id(id);
-        if (pos.first == -1)
-            break;
+        if (pos.x == -1) break;
         return general_move(game_state.generals[id].position, game_state, player, {params[1], params[2]});
     }
     case OperationType::UPDATE_GENERALS:
@@ -78,8 +77,7 @@ bool GameController::execute_single_command(int player, const Operation &op)
         // 更新将军
         int id = params[0];
         auto pos = game_state.find_general_position_by_id(id);
-        if (pos.first == -1)
-            break;
+        if (pos.x == -1) break;
         switch (params[1])
         {
         case 1:
@@ -100,8 +98,7 @@ bool GameController::execute_single_command(int player, const Operation &op)
         // 使用将军技能
         int id = params[0];
         auto pos = game_state.find_general_position_by_id(id);
-        if (pos.first == -1)
-            break;
+        if (pos.x == -1) break;
         if (params[1] == 1 || params[1] == 2)
             return skill_activate(player, game_state.generals[id].position, {params[2], params[3]}, game_state, static_cast<SkillType>(params[1] - 1));
         else
