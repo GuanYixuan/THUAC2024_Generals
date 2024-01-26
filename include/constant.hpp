@@ -21,17 +21,23 @@ public:
     static constexpr int general_movement_T1 = 20;
     static constexpr int general_movement_T2 = 40;
 
+    static constexpr int SPAWN_GENERAL_COST = 50;
+
     static constexpr int tactical_strike = 20;
     static constexpr int breakthrough = 15;
     static constexpr int leadership = 30;
     static constexpr int fortification = 30;
     static constexpr int weakening = 30;
 
+    static constexpr int STRIKE_DAMAGE = 20;
+
     static constexpr int army_movement_T1 = 80;
     static constexpr int army_movement_T2 = 150;
     static constexpr int swamp_immunity = 100;
     static constexpr int sand_immunity = 75;
     static constexpr int unlock_super_weapon = 250;
+
+    static constexpr int SUPER_WEAPON_CD = 50;
 
     static constexpr double sand_percent=0.15;
     static constexpr double swamp_percent=0.05;
