@@ -49,12 +49,38 @@ public:
 };
 
 // 将军技能类型
-enum class SkillType {
-    SURPRISE_ATTACK = 0,
-    ROUT = 1,
-    COMMAND = 2,
-    DEFENCE = 3,
-    WEAKEN = 4
+class SkillType {
+public:
+    enum __Inner_type : int8_t {
+        SURPRISE_ATTACK = 0,
+        ROUT = 1,
+        COMMAND = 2,
+        DEFENCE = 3,
+        WEAKEN = 4
+    } __val;
+
+    constexpr SkillType(__Inner_type val) noexcept : __val(val) {}
+    constexpr SkillType(int val) noexcept : __val(static_cast<__Inner_type>(val)) {}
+    // 允许直接比较
+    constexpr operator __Inner_type() const noexcept { return __val; }
+    // 不允许隐式转换为bool
+    explicit operator bool() const noexcept = delete;
+
+
+    // 技能冷却回合数
+    constexpr int cd() const noexcept { return Constant::GENERAL_SKILL_CD[static_cast<int>(__val)]; }
+
+    // 技能开销
+    constexpr int cost() const noexcept { return Constant::GENERAL_SKILL_COST[static_cast<int>(__val)]; }
+
+    // 技能持续回合数
+    constexpr int duration() const noexcept { return Constant::GENERAL_SKILL_DURATION[static_cast<int>(__val)]; }
+
+    // 获取描述字符串
+    constexpr const char* str() const noexcept { return __str[static_cast<int>(__val)]; }
+
+private:
+    constexpr static const char* __str[5] = {"SURPRISE_ATTACK", "ROUT", "COMMAND", "DEFENCE", "WEAKEN"};
 };
 
 // 将军属性类型
@@ -122,12 +148,25 @@ public:
     int defence_level = 1; // 防御力等级
     int mobility_level = 1; //移动力等级
     Coord position = {0,0}; // 位置坐标
-    std::vector<int> skills_cd = {0, 0, 0, 0, 0}; // 技能冷却回合数列表
-    std::vector<int> skill_duration = {0, 0, 0}; // 技能持续回合数列表
+    int skills_cd[Constant::GENERAL_SKILL_COUNT] = {0, 0, 0, 0, 0}; // 技能冷却回合数列表
+    // 技能持续回合数，注意下标0,1的元素无意义
+    int skill_duration[Constant::GENERAL_SKILL_COUNT] = {0, 0, 0, 0, 0};
     int rest_move = 1; // 剩余移动步数
-    virtual bool production_up(Coord location, GameState &gamestate, int player) = 0; // 提升生产力
-    virtual bool defence_up(Coord location, GameState &gamestate, int player) = 0; // 提升防御力
-    virtual bool movement_up(Coord location, GameState &gamestate, int player) = 0; // 提升移动力
+    // 提升生产力
+    virtual bool production_up(Coord location, GameState &gamestate, int player) {
+        assert(false);
+        return false;
+    }
+    // 提升防御力
+    virtual bool defence_up(Coord location, GameState &gamestate, int player) {
+        assert(false);
+        return false;
+    }
+    // 提升移动力
+    virtual bool movement_up(Coord location, GameState &gamestate, int player) {
+        assert(false);
+        return false;
+    }
     Generals(int id, int player, Coord position) noexcept:
         id(id), player(player), position(position) {};
 };
@@ -146,18 +185,18 @@ public:
 // 主将类，继承自将军基类
 class MainGenerals : public Generals {
 public:
-    virtual bool production_up(Coord location,GameState &gamestate, int player) override;
-    virtual bool defence_up(Coord location,GameState &gamestate, int player) override;
-    virtual bool movement_up(Coord location,GameState &gamestate, int player) override;
+    virtual bool production_up(Coord location, GameState &gamestate, int player) override;
+    virtual bool defence_up(Coord location, GameState &gamestate, int player) override;
+    virtual bool movement_up(Coord location, GameState &gamestate, int player) override;
     MainGenerals(int id, int player, Coord position) noexcept : Generals(id, player, position) {};
 };
 
 // 副将类，继承自将军基类
 class SubGenerals : public Generals {
 public:
-    virtual bool production_up(Coord location,GameState &gamestate, int player) override;
-    virtual bool defence_up(Coord location,GameState &gamestate, int player) override;
-    virtual bool movement_up(Coord location,GameState &gamestate, int player) override;
+    virtual bool production_up(Coord location, GameState &gamestate, int player) override;
+    virtual bool defence_up(Coord location, GameState &gamestate, int player) override;
+    virtual bool movement_up(Coord location, GameState &gamestate, int player) override;
     SubGenerals(int id, int player, Coord position) noexcept : Generals(id, player, position) {};
 };
 
@@ -172,6 +211,10 @@ public:
     int army = 0;  // 格子里的军队数量
 
     Cell(){}  // 默认构造函数，初始化格子对象
+
+    // 格子上是否有将领
+    bool has_general() const noexcept { return generals != nullptr; }
+
 };
 
 // 游戏状态类
@@ -179,7 +222,7 @@ class GameState {
 public:
     int round = 1; // 当前游戏回合数
     std::vector<Generals> generals;
-    int coin[2] = {0,0};//每个玩家的金币数量列表，分别对应玩家1，玩家2
+    int coin[Constant::PLAYER_COUNT] = {0,0};//每个玩家的金币数量列表，分别对应玩家1，玩家2
     std::vector<SuperWeapon> active_super_weapon;
     bool super_weapon_unlocked[Constant::PLAYER_COUNT] = {false, false};// 超级武器是否解锁的列表，解锁了是true，分别对应玩家1，玩家2
     int super_weapon_cd[Constant::PLAYER_COUNT] = {-1, -1};//超级武器的冷却回合数列表，分别对应玩家1，玩家2
@@ -202,104 +245,74 @@ public:
     int next_generals_id = 0;
     int winner = -1;
 
+    // 寻找将军id对应的格子，找不到返回(-1,-1)
     Coord find_general_position_by_id(int general_id) {
         for (Generals& gen : generals) {
             if (gen.id == general_id) {
                 return gen.position;
             }
         }
-        return Coord(-1,-1);
-    }//寻找将军id对应的格子，找不到返回(-1,-1)
+        return Coord(-1, -1);
+    }
+    // 更新游戏回合信息
     void update_round();
 };
 
-/* 更新游戏回合信息。 */
-void GameState::update_round() 
-{
+void GameState::update_round() {
     for (int i = 0; i < Constant::row; ++i) {
         for (int j = 0; j < Constant::col; ++j) {
+            Cell& cell = this->board[i][j];
             // 将军
-            if (this->board[i][j].generals!=nullptr){
-                this->board[i][j].generals->rest_move = this->board[i][j].generals->mobility_level;
-            }
-            if (dynamic_cast<MainGenerals*>(this->board[i][j].generals)) {
-                this->board[i][j].army += this->board[i][j].generals->produce_level;
-            } else if (dynamic_cast<SubGenerals*>(this->board[i][j].generals)) {
-                this->board[i][j].army += this->board[i][j].generals->produce_level;
-            } else if (dynamic_cast<OilWell*>(this->board[i][j].generals)) {
-                if (this->board[i][j].generals->player != -1) {
-                    this->coin[this->board[i][j].generals->player] += this->board[i][j].generals->produce_level;
-                }
-            }
-            // 每10回合增兵
-            if (this->round % 10 == 0) {
-                if (this->board[i][j].player != -1) {
-                    this->board[i][j].army += 1;
-                }
-            }
+            if (cell.generals != nullptr) cell.generals->rest_move = cell.generals->mobility_level;
+            if (dynamic_cast<MainGenerals*>(cell.generals)) cell.army += cell.generals->produce_level;
+            else if (dynamic_cast<SubGenerals*>(cell.generals)) cell.army += cell.generals->produce_level;
+            else if (dynamic_cast<OilWell*>(cell.generals) && cell.generals->player != -1) coin[cell.generals->player] += cell.generals->produce_level;
+
             // 流沙减兵
-            if (this->board[i][j].type == CellType(1) && this->board[i][j].player != -1 && this->board[i][j].army > 0) {
-                if (this->tech_level[this->board[i][j].player][2] == 0) {
-                    this->board[i][j].army -= 1;
-                    if (this->board[i][j].army == 0 && this->board[i][j].generals == nullptr) {
-                        this->board[i][j].player = -1;
-                    }
+            if (cell.type == CellType::SAND && cell.player != -1 && cell.army > 0) {
+                if (this->tech_level[cell.player][static_cast<int>(TechType::IMMUNE_SAND)] == 0) {
+                    cell.army -= 1;
+                    if (cell.army == 0 && cell.generals == nullptr) cell.player = -1;
                 }
             }
         }
     }
+    // 每10回合增兵
+    if (round % 10 == 0) for (int i = 0; i < Constant::row; ++i) for (int j = 0; j < Constant::col; ++j)
+        if (board[i][j].player != -1) board[i][j].army += 1;
 
     // 超级武器判定
     for (auto &weapon : this->active_super_weapon) {
-        if (weapon.type == WeaponType(0)) {
-            for (int _i = std::max(0, weapon.position.x - 1); _i < std::min(Constant::row, weapon.position.x + 1); ++_i) {
-                for (int _j = std::max(0, weapon.position.y - 1); _j < std::min(Constant::col, weapon.position.y + 1); ++_j) {
+        if (weapon.type == WeaponType::NUCLEAR_BOOM) {
+            for (int _i = std::max(0, weapon.position.x - Constant::SUPER_WEAPON_RADIUS); _i < std::min(Constant::row, weapon.position.x + Constant::SUPER_WEAPON_RADIUS); ++_i) {
+                for (int _j = std::max(0, weapon.position.y - Constant::SUPER_WEAPON_RADIUS); _j < std::min(Constant::col, weapon.position.y + Constant::SUPER_WEAPON_RADIUS); ++_j) {
                     if (this->board[_i][_j].army > 0) {
-                        this->board[_i][_j].army = std::max(0, this->board[_i][_j].army - 3);
-                        if (this->board[_i][_j].army == 0 && this->board[_i][_j].generals == nullptr) {
-                            this->board[_i][_j].player = -1;
-                        }
+                        this->board[_i][_j].army = std::max(0, this->board[_i][_j].army - Constant::NUCLEAR_BOMB_DAMAGE);
+                        if (this->board[_i][_j].army == 0 && this->board[_i][_j].generals == nullptr) this->board[_i][_j].player = -1;
                     }
                 }
             }
         }
     }
 
-    for (auto &i : this->super_weapon_cd) {
-        if (i > 0) {
-            --i;
-        }
-    }
+    for (auto &i : this->super_weapon_cd) if (i > 0) --i;
 
-    for (auto &weapon : this->active_super_weapon) {
-        --weapon.rest;
-    }
+    for (auto &weapon : this->active_super_weapon) --weapon.rest;
 
     // cd和duration 减少
     for (auto &gen : this->generals) {
-        for (auto &i : gen.skills_cd) {
-            if (i > 0) {
-                --i;
-            }
-        }
-        for (auto &i : gen.skill_duration) {
-            if (i > 0) {
-                --i;
-            }
-        }
+        for (auto &i : gen.skills_cd) if (i > 0) --i;
+        for (auto &i : gen.skill_duration) if (i > 0) --i;
     }
 
     // 移动步数恢复
     this->rest_move_step[0] = this->tech_level[0][0];
-    this->rest_move_step[1]=this->tech_level[1][0];
+    this->rest_move_step[1] = this->tech_level[1][0];
 
     std::vector<SuperWeapon> filtered_super_weapon;
     for (const auto& weapon : this->active_super_weapon) {
-        if (weapon.rest > 0) {
-            filtered_super_weapon.push_back(weapon);
-        }
+        if (weapon.rest > 0) filtered_super_weapon.push_back(weapon);
     }
-    
     this->active_super_weapon = filtered_super_weapon;
 
     ++this->round;

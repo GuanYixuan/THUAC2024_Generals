@@ -30,16 +30,21 @@ public:
     // 将领的攻击半径（闭区间）
     static constexpr int GENERAL_ATTACK_RADIUS = 2;
 
+
     // 将领的技能数量
     static constexpr int GENERAL_SKILL_COUNT = 5;
-    // 将领的技能冷却时间
+
+    // 技能冷却时间
     static constexpr int GENERAL_SKILL_CD[GENERAL_SKILL_COUNT] = {5, 10, 10, 10, 10};
 
-    static constexpr int tactical_strike = 20;
-    static constexpr int breakthrough = 15;
-    static constexpr int leadership = 30;
-    static constexpr int fortification = 30;
-    static constexpr int weakening = 30;
+    // 技能开销
+    static constexpr int GENERAL_SKILL_COST[GENERAL_SKILL_COUNT] = {20, 15, 30, 30, 30};
+
+    // 技能持续时间，注意下标为0和1的技能无此属性
+    static constexpr int GENERAL_SKILL_DURATION[GENERAL_SKILL_COUNT] = {0, 0, 10, 10, 10};
+
+    // 技能效果，注意下标为0和1的技能无此属性
+    static constexpr double GENERAL_SKILL_EFFECT[GENERAL_SKILL_COUNT] = {0, 0, 1.5, 1.5, 0.75};
 
     static constexpr int STRIKE_DAMAGE = 20;
 
@@ -53,5 +58,8 @@ public:
     static constexpr int SUPER_WEAPON_CD = 50;
     // 超级武器的作用半径（闭区间）
     static constexpr int SUPER_WEAPON_RADIUS = 1;
+
+    // 辐射效果每回合的伤害
+    static constexpr int NUCLEAR_BOMB_DAMAGE = 3;
 
 };
