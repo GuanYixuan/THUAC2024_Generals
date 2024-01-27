@@ -2,6 +2,9 @@
 
 class Constant {
 public:
+    // 玩家数量
+    static constexpr int PLAYER_COUNT = 2;
+
     static constexpr int col = 15; // 定义了地图的列数。
     static constexpr int row = 15; // 定义了地图的行数。
 
@@ -21,7 +24,16 @@ public:
     static constexpr int general_movement_T1 = 20;
     static constexpr int general_movement_T2 = 40;
 
+    // 召唤副将的开销
     static constexpr int SPAWN_GENERAL_COST = 50;
+
+    // 将领的攻击半径（闭区间）
+    static constexpr int GENERAL_ATTACK_RADIUS = 2;
+
+    // 将领的技能数量
+    static constexpr int GENERAL_SKILL_COUNT = 5;
+    // 将领的技能冷却时间
+    static constexpr int GENERAL_SKILL_CD[GENERAL_SKILL_COUNT] = {5, 10, 10, 10, 10};
 
     static constexpr int tactical_strike = 20;
     static constexpr int breakthrough = 15;
@@ -37,8 +49,9 @@ public:
     static constexpr int sand_immunity = 75;
     static constexpr int unlock_super_weapon = 250;
 
+    // 超级武器的冷却时间
     static constexpr int SUPER_WEAPON_CD = 50;
+    // 超级武器的作用半径（闭区间）
+    static constexpr int SUPER_WEAPON_RADIUS = 1;
 
-    static constexpr double sand_percent=0.15;
-    static constexpr double swamp_percent=0.05;
 };

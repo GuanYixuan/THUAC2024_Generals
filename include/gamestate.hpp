@@ -1,8 +1,10 @@
 #pragma once
+
 #include <vector>
 #include <string>
-#include <iostream>
 #include <cmath>
+#include <cassert>
+#include <iostream>
 #include <algorithm>
 #include "constant.hpp"
 
@@ -15,15 +17,35 @@ public:
     int y;
 
     Coord() noexcept = default;
-    Coord(int x, int y) noexcept : x(x), y(y) {};
-    Coord(const std::pair<int, int>& pos) noexcept : x(pos.first), y(pos.second) {};
+    constexpr Coord(int x, int y) noexcept : x(x), y(y) {};
+    // 无缝衔接`std::pair<int, int>`
+    constexpr Coord(const std::pair<int, int>& pos) noexcept : x(pos.first), y(pos.second) {};
     operator std::pair<int, int>() const noexcept { return std::make_pair(x, y); }
 
     // 比较与算术运算
-    bool operator==(const Coord& other) const noexcept { return x == other.x && y == other.y; }
-    bool operator!=(const Coord& other) const noexcept { return x != other.x || y != other.y; }
+    constexpr bool operator==(const Coord& other) const noexcept { return x == other.x && y == other.y; }
+    constexpr bool operator!=(const Coord& other) const noexcept { return x != other.x || y != other.y; }
     Coord operator+(const Coord& other) const noexcept { return Coord(x + other.x, y + other.y); }
     Coord operator-(const Coord& other) const noexcept { return Coord(x - other.x, y - other.y); }
+
+    // 判断此坐标是否在地图范围内
+    constexpr bool in_map() const noexcept {
+        return 0 <= x && x < Constant::row && 0 <= y && y < Constant::col;
+    }
+    // 判断`target`是否在此处将领的攻击范围内
+    constexpr bool in_attack_range(const Coord& target) const noexcept {
+        return std::abs(x - target.x) <= Constant::GENERAL_ATTACK_RADIUS && std::abs(y - target.y) <= Constant::GENERAL_ATTACK_RADIUS;
+    }
+    // 判断`target`是否在此处超级武器的作用范围内
+    constexpr bool in_super_weapon_range(const Coord& target) const noexcept {
+        return std::abs(x - target.x) <= Constant::SUPER_WEAPON_RADIUS && std::abs(y - target.y) <= Constant::SUPER_WEAPON_RADIUS;
+    }
+
+    // 计算此位置到另一个位置的曼哈顿距离
+    constexpr int dist_to(const Coord& other) const noexcept {
+        return std::abs(x - other.x) + std::abs(y - other.y);
+    }
+
 };
 
 // 将军技能类型
@@ -66,12 +88,13 @@ enum class TechType {
 };
 
 // 方向类型
-enum class Direction {
+enum Direction {
     UP = 0,
     DOWN = 1,
     LEFT = 2,
     RIGHT = 3
 };
+constexpr Coord DIRECTION_ARR[4] = {Coord(-1, 0), Coord(1, 0), Coord(0, -1), Coord(0, 1)}; // 方向数组
 
 // 将军技能结构体
 struct Skill {
@@ -86,12 +109,13 @@ struct SuperWeapon {
     int cd = 0; // 冷却回合数
     int rest = 0;// 效果剩余回合数
     Coord position = {0, 0}; // 位置坐标
-    SuperWeapon(WeaponType type, int player, int cd, int rest, Coord position):type(type), player(player), cd(cd), rest(rest), position(position){};
+    SuperWeapon(WeaponType type, int player, int cd, int rest, Coord position) noexcept :
+        type(type), player(player), cd(cd), rest(rest), position(position) {};
 };
 
 // 将军基类
 class Generals {
-    public:
+public:
     int id = 0; // 将军编号
     int player = -1; //所属玩家
     int produce_level = 1; // 生产力等级
@@ -101,63 +125,47 @@ class Generals {
     std::vector<int> skills_cd = {0, 0, 0, 0, 0}; // 技能冷却回合数列表
     std::vector<int> skill_duration = {0, 0, 0}; // 技能持续回合数列表
     int rest_move = 1; // 剩余移动步数
-    virtual bool production_up(Coord location,GameState &gamestate, int player){return false;} // 提升生产力
-    virtual bool defence_up(Coord location,GameState &gamestate, int player) {return false;} // 提升防御力
-    virtual bool movement_up(Coord location, GameState &gamestate, int player) { return false;} // 提升移动力
-    Generals(int id,int player,Coord position):
-        id(id),player(player),position(position){};
+    virtual bool production_up(Coord location, GameState &gamestate, int player) = 0; // 提升生产力
+    virtual bool defence_up(Coord location, GameState &gamestate, int player) = 0; // 提升防御力
+    virtual bool movement_up(Coord location, GameState &gamestate, int player) = 0; // 提升移动力
+    Generals(int id, int player, Coord position) noexcept:
+        id(id), player(player), position(position) {};
 };
 
 // 油井类，继承自将军基类
-class OilWell :public Generals {
-    public:
-        int mobility_level = 0;
-        float defence_level=1.0f;
-        virtual bool production_up(Coord location,GameState &gamestate, int player);
-        virtual bool defence_up(Coord location,GameState &gamestate, int player);
-        virtual bool movement_up(Coord location,GameState &gamestate, int player);
-        OilWell(int id,int player,Coord position):Generals(id,player,position){};
+class OilWell : public Generals {
+public:
+    int mobility_level = 0;
+    float defence_level=1.0f;
+    virtual bool production_up(Coord location, GameState &gamestate, int player) override;
+    virtual bool defence_up(Coord location, GameState &gamestate, int player) override;
+    virtual bool movement_up(Coord location, GameState &gamestate, int player) override { return false; }
+    OilWell(int id, int player, Coord position) noexcept : Generals(id, player, position) {};
 };
 
 // 主将类，继承自将军基类
-class MainGenerals :public Generals {
-    public:
-    std::vector<Skill> skills = {
-        {SkillType::SURPRISE_ATTACK, 5},
-        {SkillType::ROUT, 10},
-        {SkillType::COMMAND, 10},
-        {SkillType::DEFENCE, 10},
-        {SkillType::WEAKEN, 10}
-    };
-    virtual bool production_up(Coord location,GameState &gamestate, int player);
-    virtual bool defence_up(Coord location,GameState &gamestate, int player);
-    virtual bool movement_up(Coord location,GameState &gamestate, int player);
-    MainGenerals(int id,int player,Coord position):Generals(id,player,position){};
+class MainGenerals : public Generals {
+public:
+    virtual bool production_up(Coord location,GameState &gamestate, int player) override;
+    virtual bool defence_up(Coord location,GameState &gamestate, int player) override;
+    virtual bool movement_up(Coord location,GameState &gamestate, int player) override;
+    MainGenerals(int id, int player, Coord position) noexcept : Generals(id, player, position) {};
 };
 
 // 副将类，继承自将军基类
-class SubGenerals :public Generals {
-    public:
-
-    std::vector<Skill> skills = {
-        {SkillType::SURPRISE_ATTACK, 5},
-        {SkillType::ROUT, 10},
-        {SkillType::COMMAND, 10},
-        {SkillType::DEFENCE, 10},
-        {SkillType::WEAKEN, 10}
-    };
-    virtual bool production_up(Coord location,GameState &gamestate, int player);
-    virtual bool defence_up(Coord location,GameState &gamestate, int player);
-    virtual bool movement_up(Coord location,GameState &gamestate, int player);
-    SubGenerals(int id,int player,Coord position):
-        Generals(id,player,position){};
+class SubGenerals : public Generals {
+public:
+    virtual bool production_up(Coord location,GameState &gamestate, int player) override;
+    virtual bool defence_up(Coord location,GameState &gamestate, int player) override;
+    virtual bool movement_up(Coord location,GameState &gamestate, int player) override;
+    SubGenerals(int id, int player, Coord position) noexcept : Generals(id, player, position) {};
 };
 
 // 格子类
 class Cell {
-    public:
-    Coord position = {0,0};  // 格子的位置坐标
-    CellType type=CellType::PLAIN; // 格子的类型
+public:
+    Coord position;  // 格子的位置坐标
+    CellType type = CellType::PLAIN; // 格子的类型
     int player = -1;  // 控制格子的玩家编号
     Generals* generals = nullptr;  // 格子上的将军对象指针
     std::vector<SuperWeapon> weapon_activate;  // 已激活的超级武器列表
@@ -173,12 +181,24 @@ public:
     std::vector<Generals> generals;
     int coin[2] = {0,0};//每个玩家的金币数量列表，分别对应玩家1，玩家2
     std::vector<SuperWeapon> active_super_weapon;
-    bool super_weapon_unlocked[2] = {false, false};// 超级武器是否解锁的列表，解锁了是true，分别对应玩家1，玩家2
-    int super_weapon_cd[2] = {-1, -1};//超级武器的冷却回合数列表，分别对应玩家1，玩家2
-    int tech_level[2][4] = {{2, 0, 0, 0}, {2, 0, 0, 0}};//科技等级列表，第一层对应玩家一，玩家二，第二层分别对应行动力，免疫沼泽，免疫流沙，超级武器
-    int rest_move_step[2] = {2, 2};
+    bool super_weapon_unlocked[Constant::PLAYER_COUNT] = {false, false};// 超级武器是否解锁的列表，解锁了是true，分别对应玩家1，玩家2
+    int super_weapon_cd[Constant::PLAYER_COUNT] = {-1, -1};//超级武器的冷却回合数列表，分别对应玩家1，玩家2
+    int tech_level[Constant::PLAYER_COUNT][4] = {{2, 0, 0, 0}, {2, 0, 0, 0}};//科技等级列表，第一层对应玩家一，玩家二，第二层分别对应行动力，免疫沼泽，免疫流沙，超级武器
+    int rest_move_step[Constant::PLAYER_COUNT] = {2, 2};
+
+    // 游戏棋盘的二维列表，每个元素是一个Cell对象
     Cell board[Constant::row][Constant::col];
-    //游戏棋盘的二维列表，每个元素是一个Cell对象
+
+    // 便捷的取Cell方法
+    Cell& operator[](const Coord& pos) noexcept {
+        assert(pos.in_map());
+        return board[pos.x][pos.y];
+    }
+    const Cell& operator[](const Coord& pos) const noexcept {
+        assert(pos.in_map());
+        return board[pos.x][pos.y];
+    }
+
     int next_generals_id = 0;
     int winner = -1;
 
@@ -573,8 +593,4 @@ bool OilWell::defence_up(Coord location, GameState &gamestate, int player)
     return false;
   }
   return true;
-}
-bool OilWell::movement_up(Coord location, GameState &gamestate, int player)
-{
-  return false;
 }
