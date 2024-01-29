@@ -25,17 +25,14 @@ bool call_generals(GameState &gamestate, int player, const Coord& location) {
     else if (cell.generals != nullptr) return false;
 
     // 创建一个新的将军
-    SubGenerals gen = SubGenerals(gamestate.next_generals_id, player, location);
+    SubGenerals gen = SubGenerals(gamestate.next_generals_id++, player, location);
     Generals *genPtr = &gen;
     // 将新的将军放置在棋盘上的指定位置
     cell.generals = genPtr;
     // 将新的将军添加到游戏状态的将军列表中
     gamestate.generals.push_back(gen);
-    // 将军的ID增加1
-    gamestate.next_generals_id += 1;
     // 玩家的硬币减少50
     gamestate.coin[player] -= Constant::SPAWN_GENERAL_COST;
-    // 如果所有的条件都满足，返回true
     return true;
 }
 
@@ -53,8 +50,8 @@ float compute_attack(const Cell &cell, const GameState &gamestate) {
     int cell_x = cell.position.x;
     int cell_y = cell.position.y;
     // 遍历cell周围至少5*5的区域，寻找里面是否有将军，他们是否使用了增益或减益技能
-    for (int i = -2; i <= 2; ++i) {
-        for (int j = -2; j <= 2; ++j) {
+    for (int i = -Constant::GENERAL_ATTACK_RADIUS; i <= Constant::GENERAL_ATTACK_RADIUS; ++i) {
+        for (int j = -Constant::GENERAL_ATTACK_RADIUS; j <= Constant::GENERAL_ATTACK_RADIUS; ++j) {
             int x = cell_x + i;
             int y = cell_y + j;
             if (0 <= x && x < Constant::row && 0 <= y && y < Constant::col) {
@@ -69,11 +66,11 @@ float compute_attack(const Cell &cell, const GameState &gamestate) {
         }
     }
     // 考虑gamestate中的超级武器是否被激活，（可以获取到激活的位置）该位置的军队是否会被影响
-    for (const SuperWeapon &active_weapon : gamestate.active_super_weapon) {
-        if (active_weapon.type == WeaponType::ATTACK_ENHANCE &&
-            cell_x - 1 <= active_weapon.position.x && active_weapon.position.x <= cell_x + 1 &&
-            cell_y - 1 <= active_weapon.position.y && active_weapon.position.y <= cell_y + 1 &&
-            active_weapon.player == cell.player)
+    for (const SuperWeapon &weapon : gamestate.active_super_weapon) {
+        if (weapon.type == WeaponType::ATTACK_ENHANCE &&
+            cell_x - Constant::SUPER_WEAPON_RADIUS <= weapon.position.x && weapon.position.x <= cell_x + Constant::SUPER_WEAPON_RADIUS &&
+            cell_y - Constant::SUPER_WEAPON_RADIUS <= weapon.position.y && weapon.position.y <= cell_y + Constant::SUPER_WEAPON_RADIUS &&
+            weapon.player == cell.player)
         {
             attack = attack * 3;
             break;
@@ -95,8 +92,8 @@ float compute_defence(const Cell &cell, const GameState &gamestate) {
     int cell_x = cell.position.x;
     int cell_y = cell.position.y;
     // 遍历cell周围至少5*5的区域，寻找里面是否有将军，他们是否使用了增益或减益技能
-    for (int i = -2; i <= 2; ++i) {
-        for (int j = -2; j <= 2; ++j) {
+    for (int i = -Constant::GENERAL_ATTACK_RADIUS; i <= Constant::GENERAL_ATTACK_RADIUS; ++i) {
+        for (int j = -Constant::GENERAL_ATTACK_RADIUS; j <= Constant::GENERAL_ATTACK_RADIUS; ++j) {
             int x = cell_x + i;
             int y = cell_y + j;
             if (0 <= x && x < Constant::row && 0 <= y && y < Constant::col) {
@@ -113,12 +110,12 @@ float compute_defence(const Cell &cell, const GameState &gamestate) {
     // 考虑cell上是否有general，它的防御力是否被升级
     if (cell.generals != nullptr) defence *= cell.generals->defence_level;
     // 考虑gamestate中的超级武器是否被激活，（可以获取到激活的位置）该位置的军队是否会被影响
-    for (const SuperWeapon &active_weapon : gamestate.active_super_weapon) {
+    for (const SuperWeapon &weapon : gamestate.active_super_weapon) {
         if (
-            active_weapon.type == WeaponType::ATTACK_ENHANCE &&
-            cell_x - 1 <= active_weapon.position.x && active_weapon.position.x <= cell_x + 1 &&
-            cell_y - 1 <= active_weapon.position.y && active_weapon.position.y <= cell_y + 1 &&
-            active_weapon.player == cell.player)
+            weapon.type == WeaponType::ATTACK_ENHANCE &&
+            cell_x - Constant::SUPER_WEAPON_RADIUS <= weapon.position.x && weapon.position.x <= cell_x + Constant::SUPER_WEAPON_RADIUS &&
+            cell_y - Constant::SUPER_WEAPON_RADIUS <= weapon.position.y && weapon.position.y <= cell_y + Constant::SUPER_WEAPON_RADIUS &&
+            weapon.player == cell.player)
         {
             defence = defence * 3;
             break;

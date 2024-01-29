@@ -9,54 +9,47 @@
  * @brief 读取初始地图及先后手信息
  * @return std::tuple<int, Gamestate> - 即先后手编号和游戏状态
  */
-std::tuple<int, GameState> read_init_map()
-{
+std::tuple<int, GameState> read_init_map() {
     GameState gamestate;
-    int my_seat, id, player, x, y;
-    std::pair<int, int> position;
     std::string s;
     getline(std::cin, s);
-    // std::cerr << s << std::endl;
+
     auto d = nlohmann::json::parse(s);
-    my_seat = d["Player"];
+    int my_seat = d["Player"];
     auto map = d["Cells"], generals = d["Generals"], coins = d["Coins"];
     std::string types = d["Cell_type"].dump();
     gamestate.coin[0] = coins[0], gamestate.coin[1] = coins[1];
-    for (int i = 0; i < map.size(); ++i)
-    {
-        x = int(map[i][0][0]);
-        y = int(map[i][0][1]);
-        gamestate.board[x][y].type = CellType(int(types[i + 1]) - '0');
-        gamestate.board[x][y].player = int(map[i][1]);
-        gamestate.board[x][y].army = int(map[i][2]);
-        gamestate.board[x][y].position = Coord(x, y);
+    for (int i = 0; i < map.size(); ++i) {
+        int x = int(map[i][0][0]);
+        int y = int(map[i][0][1]);
+        Cell& cell = gamestate.board[x][y];
+
+        cell.type = CellType(int(types[i + 1]) - '0');
+        cell.player = int(map[i][1]);
+        cell.army = int(map[i][2]);
+        cell.position = Coord(x, y);
     }
-    for (int i = 0; i < generals.size(); ++i)
-    {
-        id = int(generals[i]["Id"]);
-        player = int(generals[i]["Player"]);
-        position = {int(generals[i]["Position"][0]), int(generals[i]["Position"][1])};
+    for (int i = 0; i < generals.size(); ++i) {
+        int id = int(generals[i]["Id"]);
+        int player = int(generals[i]["Player"]);
         gamestate.next_generals_id++;
-        switch (int(generals[i]["Type"]))
-        {
+
+        Coord position{int(generals[i]["Position"][0]), int(generals[i]["Position"][1])};
+        Cell& cell = gamestate[position];
+
+        switch (int(generals[i]["Type"])) {
         case 1:
-        {
-            gamestate.board[position.first][position.second].generals = new MainGenerals(id, player, position);
-            gamestate.generals.push_back(*gamestate.board[position.first][position.second].generals);
+            cell.generals = new MainGenerals(id, player, position);
+            gamestate.generals.push_back(*cell.generals);
             break;
-        }
         case 2:
-        {
-            gamestate.board[position.first][position.second].generals = new SubGenerals(id, player, position);
-            gamestate.generals.push_back(*gamestate.board[position.first][position.second].generals);
+            cell.generals = new SubGenerals(id, player, position);
+            gamestate.generals.push_back(*cell.generals);
             break;
-        }
         case 3:
-        {
-            gamestate.board[position.first][position.second].generals = new OilWell(id, player, position);
-            gamestate.generals.push_back(*gamestate.board[position.first][position.second].generals);
+            cell.generals = new OilWell(id, player, position);
+            gamestate.generals.push_back(*cell.generals);
             break;
-        }
         }
     }
     return std::tuple<int, GameState>(my_seat, gamestate);
@@ -68,7 +61,7 @@ std::tuple<int, GameState> read_init_map()
 std::vector<Operation> read_enemy_operations()
 {
     std::vector<Operation> operations;
-    std::vector<int> params;
+    std::vector<int> params; // 在哪里重置的？
     Operation op;
     int param, op_type;
     char ch;
@@ -79,7 +72,7 @@ std::vector<Operation> read_enemy_operations()
         { // 操作结束
             break;
         }
-        while (ch = getchar() != '\n')
+        while ((ch = getchar()) != '\n')
         {
             std::cin >> param;
             params.push_back(param);
@@ -113,19 +106,4 @@ void write_to_judger(const std::string &msg)
     // 先发送消息长度，再发送消息本身
     print_header(msg.length());
     std::cout << msg;
-}
-/**
- * @brief 向评测机发送我方操作列表
- * @param ops A vector of Operation
- */
-void write_our_operation(const std::vector<Operation> &ops)
-{
-    std::string msg = "";
-
-    for (const auto &op : ops)
-    {
-        msg += (op.stringize() + '\n');
-    }
-
-    write_to_judger(msg);
 }

@@ -8,8 +8,6 @@
 #include <algorithm>
 #include "constant.hpp"
 
-class GameState;
-
 // 坐标类
 class Coord {
 public:
@@ -130,14 +128,16 @@ struct Skill {
 
 // 超级武器结构体
 struct SuperWeapon {
-    WeaponType type = WeaponType::NUCLEAR_BOOM; // 武器类型
-    int player = -1; // 所属玩家
-    int cd = 0; // 冷却回合数
-    int rest = 0;// 效果剩余回合数
-    Coord position = {0, 0}; // 位置坐标
+    WeaponType type; // 武器类型
+    int player; // 所属玩家
+    int cd; // 冷却回合数
+    int rest; // 效果剩余回合数
+    Coord position; // 位置坐标
     SuperWeapon(WeaponType type, int player, int cd, int rest, Coord position) noexcept :
         type(type), player(player), cd(cd), rest(rest), position(position) {};
 };
+
+class GameState;
 
 // 将军基类
 class Generals {
@@ -178,6 +178,9 @@ public:
         id(id), player(player), position(position),
         produce_level(1), defence_level(1), mobility_level(1),
         skills_cd{0}, skill_duration{0}, rest_move(1) {};
+
+    // 是否有归属
+    bool is_occupied() const noexcept { return player >= 0 && player < Constant::PLAYER_COUNT; }
 };
 
 // 油井类，继承自将军基类
@@ -223,6 +226,9 @@ public:
 
     // 格子上是否有将领
     bool has_general() const noexcept { return generals != nullptr; }
+
+    // 格子是否有归属
+    bool is_occupied() const noexcept { return player >= 0 && player < Constant::PLAYER_COUNT; }
 
 };
 
@@ -273,10 +279,12 @@ void GameState::update_round() {
         for (int j = 0; j < Constant::col; ++j) {
             Cell& cell = this->board[i][j];
             // 将军
-            if (cell.generals != nullptr) cell.generals->rest_move = cell.generals->mobility_level;
-            if (dynamic_cast<MainGenerals*>(cell.generals)) cell.army += cell.generals->produce_level;
-            else if (dynamic_cast<SubGenerals*>(cell.generals)) cell.army += cell.generals->produce_level;
-            else if (dynamic_cast<OilWell*>(cell.generals) && cell.generals->player != -1) coin[cell.generals->player] += cell.generals->produce_level;
+            Generals* general = cell.generals;
+            if (general != nullptr) general->rest_move = general->mobility_level;
+            if (dynamic_cast<MainGenerals*>(general)) cell.army += general->produce_level;
+            // 曾经的错误：没有检查副将是否有归属
+            else if (dynamic_cast<SubGenerals*>(general) && general->is_occupied()) cell.army += general->produce_level;
+            else if (dynamic_cast<OilWell*>(general) && general->is_occupied()) coin[general->player] += general->produce_level;
 
             // 流沙减兵
             if (cell.type == CellType::SAND && cell.player != -1 && cell.army > 0) {
@@ -296,9 +304,10 @@ void GameState::update_round() {
         if (weapon.type == WeaponType::NUCLEAR_BOOM) {
             for (int _i = std::max(0, weapon.position.x - Constant::SUPER_WEAPON_RADIUS); _i < std::min(Constant::row, weapon.position.x + Constant::SUPER_WEAPON_RADIUS); ++_i) {
                 for (int _j = std::max(0, weapon.position.y - Constant::SUPER_WEAPON_RADIUS); _j < std::min(Constant::col, weapon.position.y + Constant::SUPER_WEAPON_RADIUS); ++_j) {
-                    if (this->board[_i][_j].army > 0) {
-                        this->board[_i][_j].army = std::max(0, this->board[_i][_j].army - Constant::NUCLEAR_BOMB_DAMAGE);
-                        if (this->board[_i][_j].army == 0 && this->board[_i][_j].generals == nullptr) this->board[_i][_j].player = -1;
+                    Cell& cell = board[_i][_j];
+                    if (cell.army > 0) {
+                        cell.army = std::max(0, cell.army - Constant::NUCLEAR_BOMB_DAMAGE);
+                        if (cell.army == 0 && cell.generals == nullptr) cell.player = -1;
                     }
                 }
             }
