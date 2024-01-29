@@ -142,16 +142,23 @@ struct SuperWeapon {
 // 将军基类
 class Generals {
 public:
-    int id = 0; // 将军编号
-    int player = -1; //所属玩家
-    int produce_level = 1; // 生产力等级
-    double defence_level = 1; // 防御力等级
-    int mobility_level = 1; //移动力等级
-    Coord position = {0,0}; // 位置坐标
-    int skills_cd[Constant::GENERAL_SKILL_COUNT] = {0, 0, 0, 0, 0}; // 技能冷却回合数列表
+    int id; // 将军编号
+    int player; //所属玩家
+    Coord position; // 位置坐标
+
+    int produce_level; // 生产力等级
+    double defence_level; // 防御力等级
+    int mobility_level; //移动力等级
+
+    // 技能冷却回合数
+    int skills_cd[Constant::GENERAL_SKILL_COUNT];
+
     // 技能持续回合数，注意下标0,1的元素无意义
-    int skill_duration[Constant::GENERAL_SKILL_COUNT] = {0, 0, 0, 0, 0};
-    int rest_move = 1; // 剩余移动步数
+    int skill_duration[Constant::GENERAL_SKILL_COUNT];
+
+    // 剩余移动步数
+    int rest_move;
+
     // 提升生产力
     virtual bool production_up(GameState &gamestate, int player) {
         assert(false);
@@ -168,7 +175,9 @@ public:
         return false;
     }
     Generals(int id, int player, Coord position) noexcept:
-        id(id), player(player), position(position) {};
+        id(id), player(player), position(position),
+        produce_level(1), defence_level(1), mobility_level(1),
+        skills_cd{0}, skill_duration{0}, rest_move(1) {};
 };
 
 // 油井类，继承自将军基类
@@ -204,13 +213,13 @@ public:
 class Cell {
 public:
     Coord position;  // 格子的位置坐标
-    CellType type = CellType::PLAIN; // 格子的类型
-    int player = -1;  // 控制格子的玩家编号
-    Generals* generals = nullptr;  // 格子上的将军对象指针
+    CellType type; // 格子的类型
+    int player;  // 控制格子的玩家编号
+    Generals* generals;  // 格子上的将军对象指针
     std::vector<SuperWeapon> weapon_activate;  // 已激活的超级武器列表
-    int army = 0;  // 格子里的军队数量
+    int army;  // 格子里的军队数量
 
-    Cell(){}  // 默认构造函数，初始化格子对象
+    Cell() noexcept : type(CellType::PLAIN), player(-1), generals(nullptr), army(0) {};
 
     // 格子上是否有将领
     bool has_general() const noexcept { return generals != nullptr; }
@@ -220,17 +229,25 @@ public:
 // 游戏状态类
 class GameState {
 public:
-    int round = 1; // 当前游戏回合数
+    int round; // 当前游戏回合数
     std::vector<Generals> generals;
-    int coin[Constant::PLAYER_COUNT] = {0,0};//每个玩家的金币数量列表，分别对应玩家1，玩家2
+    int coin[Constant::PLAYER_COUNT]; // 每个玩家的金币数量列表，分别对应玩家1，玩家2
     std::vector<SuperWeapon> active_super_weapon;
-    bool super_weapon_unlocked[Constant::PLAYER_COUNT] = {false, false};// 超级武器是否解锁的列表，解锁了是true，分别对应玩家1，玩家2
-    int super_weapon_cd[Constant::PLAYER_COUNT] = {-1, -1};//超级武器的冷却回合数列表，分别对应玩家1，玩家2
-    int tech_level[Constant::PLAYER_COUNT][4] = {{2, 0, 0, 0}, {2, 0, 0, 0}};//科技等级列表，第一层对应玩家一，玩家二，第二层分别对应行动力，免疫沼泽，免疫流沙，超级武器
-    int rest_move_step[Constant::PLAYER_COUNT] = {2, 2};
+    bool super_weapon_unlocked[Constant::PLAYER_COUNT]; // 超级武器是否解锁的列表，解锁了是true，分别对应玩家1，玩家2
+    int super_weapon_cd[Constant::PLAYER_COUNT]; // 超级武器的冷却回合数列表，分别对应玩家1，玩家2
+    int tech_level[Constant::PLAYER_COUNT][4]; // 科技等级列表，第一层对应玩家一，玩家二，第二层分别对应行动力，免疫沼泽，免疫流沙，超级武器
+    int rest_move_step[Constant::PLAYER_COUNT];
+
+    int next_generals_id;
 
     // 游戏棋盘的二维列表，每个元素是一个Cell对象
     Cell board[Constant::row][Constant::col];
+
+    GameState() noexcept :
+        round(1), coin{0, 0},
+        super_weapon_unlocked{false, false}, super_weapon_cd{-1, -1},
+        tech_level{{2, 0, 0, 0}, {2, 0, 0, 0}}, rest_move_step{2, 2},
+        next_generals_id(0), board{} {}
 
     // 便捷的取Cell方法
     Cell& operator[](const Coord& pos) noexcept {
@@ -242,16 +259,9 @@ public:
         return board[pos.x][pos.y];
     }
 
-    int next_generals_id = 0;
-    int winner = -1;
-
     // 寻找将军id对应的格子，找不到返回(-1,-1)
-    Coord find_general_position_by_id(int general_id) {
-        for (Generals& gen : generals) {
-            if (gen.id == general_id) {
-                return gen.position;
-            }
-        }
+    Coord find_general_position_by_id(int general_id) const noexcept {
+        for (const Generals& gen : generals) if (gen.id == general_id) return gen.position;
         return Coord(-1, -1);
     }
     // 更新游戏回合信息
