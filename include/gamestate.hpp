@@ -145,7 +145,7 @@ public:
     int id = 0; // 将军编号
     int player = -1; //所属玩家
     int produce_level = 1; // 生产力等级
-    int defence_level = 1; // 防御力等级
+    double defence_level = 1; // 防御力等级
     int mobility_level = 1; //移动力等级
     Coord position = {0,0}; // 位置坐标
     int skills_cd[Constant::GENERAL_SKILL_COUNT] = {0, 0, 0, 0, 0}; // 技能冷却回合数列表
@@ -153,17 +153,17 @@ public:
     int skill_duration[Constant::GENERAL_SKILL_COUNT] = {0, 0, 0, 0, 0};
     int rest_move = 1; // 剩余移动步数
     // 提升生产力
-    virtual bool production_up(Coord location, GameState &gamestate, int player) {
+    virtual bool production_up(GameState &gamestate, int player) {
         assert(false);
         return false;
     }
     // 提升防御力
-    virtual bool defence_up(Coord location, GameState &gamestate, int player) {
+    virtual bool defence_up(GameState &gamestate, int player) {
         assert(false);
         return false;
     }
     // 提升移动力
-    virtual bool movement_up(Coord location, GameState &gamestate, int player) {
+    virtual bool movement_up(GameState &gamestate, int player) {
         assert(false);
         return false;
     }
@@ -174,29 +174,29 @@ public:
 // 油井类，继承自将军基类
 class OilWell : public Generals {
 public:
-    int mobility_level = 0;
-    float defence_level=1.0f;
-    virtual bool production_up(Coord location, GameState &gamestate, int player) override;
-    virtual bool defence_up(Coord location, GameState &gamestate, int player) override;
-    virtual bool movement_up(Coord location, GameState &gamestate, int player) override { return false; }
-    OilWell(int id, int player, Coord position) noexcept : Generals(id, player, position) {};
+    virtual bool production_up(GameState &gamestate, int player) override;
+    virtual bool defence_up(GameState &gamestate, int player) override;
+    virtual bool movement_up(GameState &gamestate, int player) override { return false; }
+    OilWell(int id, int player, Coord position) noexcept : Generals(id, player, position) {
+        mobility_level = 0;
+    };
 };
 
 // 主将类，继承自将军基类
 class MainGenerals : public Generals {
 public:
-    virtual bool production_up(Coord location, GameState &gamestate, int player) override;
-    virtual bool defence_up(Coord location, GameState &gamestate, int player) override;
-    virtual bool movement_up(Coord location, GameState &gamestate, int player) override;
+    virtual bool production_up(GameState &gamestate, int player) override;
+    virtual bool defence_up(GameState &gamestate, int player) override;
+    virtual bool movement_up(GameState &gamestate, int player) override;
     MainGenerals(int id, int player, Coord position) noexcept : Generals(id, player, position) {};
 };
 
 // 副将类，继承自将军基类
 class SubGenerals : public Generals {
 public:
-    virtual bool production_up(Coord location, GameState &gamestate, int player) override;
-    virtual bool defence_up(Coord location, GameState &gamestate, int player) override;
-    virtual bool movement_up(Coord location, GameState &gamestate, int player) override;
+    virtual bool production_up(GameState &gamestate, int player) override;
+    virtual bool defence_up(GameState &gamestate, int player) override;
+    virtual bool movement_up(GameState &gamestate, int player) override;
     SubGenerals(int id, int player, Coord position) noexcept : Generals(id, player, position) {};
 };
 
@@ -318,292 +318,104 @@ void GameState::update_round() {
     ++this->round;
 }
 
-bool MainGenerals::production_up(Coord location, GameState &gamestate, int player)
-{
-  // 获取将军的生产等级
-  int level = gamestate.board[location.x][location.y].generals->produce_level;
-  // 根据生产等级选择不同的操作
-  switch (level)
-  {
-  case 1: // 如果生产等级为1
-    // 检查玩家是否有足够的金币
-    if (gamestate.coin[player] < Constant::lieutenant_production_T1 / 2)
-    {
-      return false; // 金币不足，返回false
+bool MainGenerals::production_up(GameState &gamestate, int player) {
+    for (int i = 0; i < Constant::GENERAL_PRODUCTION_LEVELS; ++i) {
+        if (produce_level == Constant::GENERAL_PRODUCTION_VALUES[i]) {
+            int cost = Constant::GENERAL_PRODUCTION_COST[i] / Constant::MAIN_GENERAL_DISCOUNT;
+            if (gamestate.coin[player] < cost) return false;
+
+            gamestate.coin[player] -= cost;
+            produce_level = Constant::GENERAL_PRODUCTION_VALUES[i + 1];
+            return true;
+        }
     }
-    else
-    {
-      // 金币足够，提升生产等级为2
-      gamestate.board[location.x][location.y].generals->produce_level = 2;
-      // 扣除相应的金币
-      gamestate.coin[player] -= Constant::lieutenant_production_T1 / 2;
-      return true; // 返回true
+    return false;
+}
+bool MainGenerals::defence_up(GameState &gamestate, int player) {
+    for (int i = 0; i < Constant::GENERAL_DEFENCE_LEVELS; ++i) {
+        if (defence_level == Constant::GENERAL_DEFENCE_VALUES[i]) {
+            int cost = Constant::GENERAL_DEFENCE_COST[i] / Constant::MAIN_GENERAL_DISCOUNT;
+            if (gamestate.coin[player] < cost) return false;
+
+            gamestate.coin[player] -= cost;
+            defence_level = Constant::GENERAL_DEFENCE_VALUES[i + 1];
+            return true;
+        }
     }
-    break; // 跳出switch语句
-  case 2:  // 如果生产等级为2
-    // 检查玩家是否有足够的金币
-    if (gamestate.coin[player] < Constant::lieutenant_production_T2 / 2)
-    {
-      return false; // 金币不足，返回false
+    return false;
+}
+bool MainGenerals::movement_up(GameState &gamestate, int player) {
+    for (int i = 0; i < Constant::GENERAL_MOVEMENT_LEVELS; ++i) {
+        if (mobility_level == Constant::GENERAL_MOVEMENT_VALUES[i]) {
+            int cost = Constant::GENERAL_MOVEMENT_COST[i] / Constant::MAIN_GENERAL_DISCOUNT;
+            if (gamestate.coin[player] < cost) return false;
+
+            gamestate.coin[player] -= cost;
+            mobility_level = Constant::GENERAL_MOVEMENT_VALUES[i + 1];
+            return true;
+        }
     }
-    else
-    {
-      // 金币足够，提升生产等级为4
-      gamestate.board[location.x][location.y].generals->produce_level = 4;
-      // 扣除相应的金币
-      gamestate.coin[player] -= Constant::lieutenant_production_T2 / 2;
-      return true; // 返回true
-    }
-    break;        // 跳出switch语句
-  default:        // 如果生产等级不是1或2
-    return false; // 返回false
-  }
+    return false;
 }
 
-bool MainGenerals::defence_up(Coord location, GameState &gamestate, int player)
-{
-  switch (gamestate.board[location.x][location.y].generals->defence_level)
-  {
-  case 1:
-    if (gamestate.coin[player] < Constant::general_movement_T1 / 2)
-    {
-      return false;
+bool SubGenerals::production_up(GameState &gamestate, int player) {
+    for (int i = 0; i < Constant::GENERAL_PRODUCTION_LEVELS; ++i) {
+        if (produce_level == Constant::GENERAL_PRODUCTION_VALUES[i]) {
+            if (gamestate.coin[player] < Constant::GENERAL_PRODUCTION_COST[i]) return false;
+
+            gamestate.coin[player] -= Constant::GENERAL_PRODUCTION_COST[i];
+            produce_level = Constant::GENERAL_PRODUCTION_VALUES[i + 1];
+            return true;
+        }
     }
-    else
-    {
-      gamestate.board[location.x][location.y].generals->defence_level = 2;
-      gamestate.coin[player] -= Constant::general_movement_T1 / 2;
-    }
-    break;
-  case 2:
-    if (gamestate.coin[player] < Constant::lieutenant_defense_T2 / 2)
-    {
-      return false;
-    }
-    else
-    {
-      gamestate.board[location.x][location.y].generals->defence_level = 3;
-      gamestate.coin[player] -= Constant::lieutenant_defense_T2 / 2;
-    }
-    break;
-  default:
     return false;
-  }
-  return true;
+}
+bool SubGenerals::defence_up(GameState &gamestate, int player) {
+    for (int i = 0; i < Constant::GENERAL_DEFENCE_LEVELS; ++i) {
+        if (defence_level == Constant::GENERAL_DEFENCE_VALUES[i]) {
+            if (gamestate.coin[player] < Constant::GENERAL_DEFENCE_COST[i]) return false;
+
+            gamestate.coin[player] -= Constant::GENERAL_DEFENCE_COST[i];
+            defence_level = Constant::GENERAL_DEFENCE_VALUES[i + 1];
+            return true;
+        }
+    }
+    return false;
+}
+bool SubGenerals::movement_up(GameState &gamestate, int player) {
+    for (int i = 0; i < Constant::GENERAL_MOVEMENT_LEVELS; ++i) {
+        if (mobility_level == Constant::GENERAL_MOVEMENT_VALUES[i]) {
+            if (gamestate.coin[player] < Constant::GENERAL_MOVEMENT_COST[i]) return false;
+
+            gamestate.coin[player] -= Constant::GENERAL_MOVEMENT_COST[i];
+            mobility_level = Constant::GENERAL_MOVEMENT_VALUES[i + 1];
+            return true;
+        }
+    }
+    return false;
 }
 
-bool MainGenerals::movement_up(Coord location, GameState &gamestate, int player)
-{
-  switch (gamestate.board[location.x][location.y].generals->mobility_level)
-  {
-  case 1:
-    if (gamestate.coin[player] < Constant::general_movement_T1 / 2)
-    {
-      return false;
-    }
-    else
-    {
-      gamestate.board[location.x][location.y].generals->mobility_level = 2;
-      gamestate.coin[player] -= Constant::general_movement_T1 / 2;
-    }
-    break;
-  case 2:
-    if (gamestate.coin[player] < Constant::general_movement_T2 / 2)
-    {
-      return false;
-    }
-    else
-    {
-      gamestate.board[location.x][location.y].generals->mobility_level = 4;
-      gamestate.coin[player] -= Constant::general_movement_T2 / 2;
-    }
-    break;
-  default:
-    return false;
-  }
-  return true;
-}
+bool OilWell::production_up(GameState &gamestate, int player) {
+    for (int i = 0; i < Constant::OILWELL_PRODUCTION_LEVELS; ++i) {
+        if (produce_level == Constant::OILWELL_PRODUCTION_VALUES[i]) {
+            if (gamestate.coin[player] < Constant::OILWELL_PRODUCTION_COST[i]) return false;
 
-bool SubGenerals::production_up(Coord location, GameState &gamestate, int player)
-{
-  switch (gamestate.board[location.x][location.y].generals->produce_level)
-  {
-  case 1:
-    if (gamestate.coin[player] < Constant::lieutenant_production_T1)
-    {
-      return false;
+            gamestate.coin[player] -= Constant::OILWELL_PRODUCTION_COST[i];
+            produce_level = Constant::OILWELL_PRODUCTION_VALUES[i + 1];
+            return true;
+        }
     }
-    else
-    {
-      gamestate.board[location.x][location.y].generals->produce_level = 2;
-      gamestate.coin[player] -= Constant::lieutenant_production_T1;
-    }
-    break;
-  case 2:
-    if (gamestate.coin[player] < Constant::lieutenant_production_T2)
-    {
-      return false;
-    }
-    else
-    {
-      gamestate.board[location.x][location.y].generals->produce_level = 4;
-      gamestate.coin[player] -= Constant::lieutenant_production_T2;
-    }
-    break;
-  default:
     return false;
-  }
-  return true;
 }
+bool OilWell::defence_up(GameState &gamestate, int player) {
+    for (int i = 0; i < Constant::OILWELL_DEFENCE_LEVELS; ++i) {
+        if (defence_level == Constant::OILWELL_DEFENCE_VALUES[i]) {
+            if (gamestate.coin[player] < Constant::OILWELL_DEFENCE_COST[i]) return false;
 
-bool SubGenerals::defence_up(Coord location, GameState &gamestate, int player)
-{
-  switch (gamestate.board[location.x][location.y].generals->defence_level)
-  {
-  case 1:
-    if (gamestate.coin[player] < Constant::general_movement_T1 / 2)
-    {
-      return false;
+            gamestate.coin[player] -= Constant::OILWELL_DEFENCE_COST[i];
+            defence_level = Constant::OILWELL_DEFENCE_VALUES[i + 1];
+            return true;
+        }
     }
-    else
-    {
-      gamestate.board[location.x][location.y].generals->defence_level = 2;
-      gamestate.coin[player] -= Constant::general_movement_T1 / 2;
-    }
-    break;
-  case 2:
-    if (gamestate.coin[player] < Constant::lieutenant_defense_T2 / 2)
-    {
-      return false;
-    }
-    else
-    {
-      gamestate.board[location.x][location.y].generals->defence_level = 3;
-      gamestate.coin[player] -= Constant::lieutenant_defense_T2 / 2;
-    }
-    break;
-  default:
     return false;
-  }
-  return true;
-}
-
-bool SubGenerals::movement_up(Coord location, GameState &gamestate, int player)
-{
-  switch (gamestate.board[location.x][location.y].generals->mobility_level)
-  {
-  case 1:
-    if (gamestate.coin[player] < Constant::general_movement_T1)
-    {
-      return false;
-    }
-    else
-    {
-      gamestate.board[location.x][location.y].generals->mobility_level = 2;
-      gamestate.coin[player] -= Constant::general_movement_T1;
-    }
-    break;
-  case 2:
-    if (gamestate.coin[player] < Constant::general_movement_T2)
-    {
-      return false;
-    }
-    else
-    {
-      gamestate.board[location.x][location.y].generals->mobility_level = 4;
-      gamestate.coin[player] -= Constant::general_movement_T2;
-    }
-    break;
-  default:
-    return false;
-  }
-  return true;
-}
-
-bool OilWell::production_up(Coord location, GameState &gamestate, int player)
-{
-  switch (gamestate.board[location.x][location.y].generals->produce_level)
-  {
-  case 1:
-    if (gamestate.coin[player] < Constant::OilWell_production_T1)
-    {
-      return false;
-    }
-    else
-    {
-      gamestate.board[location.x][location.y].generals->produce_level = 2;
-      gamestate.coin[player] -= Constant::OilWell_production_T1;
-    }
-    break;
-  case 2:
-    if (gamestate.coin[player] < Constant::OilWell_production_T2)
-    {
-      return false;
-    }
-    else
-    {
-      gamestate.board[location.x][location.y].generals->produce_level = 4;
-      gamestate.coin[player] -= Constant::OilWell_production_T2;
-    }
-    break;
-  case 4:
-    if (gamestate.coin[player] < Constant::OilWell_production_T3)
-    {
-      return false;
-    }
-    else
-    {
-      gamestate.board[location.x][location.y].generals->produce_level = 6;
-      gamestate.coin[player] -= Constant::OilWell_production_T3;
-    }
-    break;
-  default:
-    return false;
-  }
-  return true;
-}
-
-bool OilWell::defence_up(Coord location, GameState &gamestate, int player)
-{
-  if (gamestate.board[location.x][location.y].generals->defence_level == 1)
-  {
-    if (gamestate.coin[player] < Constant::OilWell_defense_T1)
-    {
-      return false;
-    }
-    else
-    {
-      gamestate.board[location.x][location.y].generals->defence_level = 1.5;
-      gamestate.coin[player] -= Constant::OilWell_defense_T1;
-    }
-  }
-  else if (gamestate.board[location.x][location.y].generals->defence_level == 1.5)
-  {
-    if (gamestate.coin[player] < Constant::OilWell_defense_T2)
-    {
-      return false;
-    }
-    else
-    {
-      gamestate.board[location.x][location.y].generals->defence_level = 2;
-      gamestate.coin[player] -= Constant::OilWell_defense_T2;
-    }
-  }
-  else if (gamestate.board[location.x][location.y].generals->defence_level == 2)
-  {
-    if (gamestate.coin[player] < Constant::OilWell_defense_T3)
-    {
-      return false;
-    }
-    else
-    {
-      gamestate.board[location.x][location.y].generals->defence_level = 3;
-      gamestate.coin[player] -= Constant::OilWell_defense_T3;
-    }
-  }
-  else
-  {
-    return false;
-  }
-  return true;
 }

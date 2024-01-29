@@ -8,24 +8,36 @@ public:
     static constexpr int col = 15; // 定义了地图的列数。
     static constexpr int row = 15; // 定义了地图的行数。
 
-    static constexpr int OilWell_production_T1 = 10;
-    static constexpr int OilWell_production_T2 = 25;
-    static constexpr int OilWell_production_T3 = 35;
-    static constexpr int OilWell_defense_T1 = 10;
-    static constexpr int OilWell_defense_T2 = 15;
-    static constexpr int OilWell_defense_T3 = 30;
+    // 油井产量升级相关常数
+    static constexpr int OILWELL_PRODUCTION_LEVELS = 4;
+    static constexpr int OILWELL_PRODUCTION_VALUES[OILWELL_PRODUCTION_LEVELS] = {1, 2, 4, 6};
+    static constexpr int OILWELL_PRODUCTION_COST[OILWELL_PRODUCTION_LEVELS] = {10, 25, 35, 1 << 30};
 
-    static constexpr int lieutenant_new_recruit = 50;
-    static constexpr int lieutenant_production_T1 = 40;
-    static constexpr int lieutenant_production_T2 = 80;
-    static constexpr int lieutenant_defense_T1 = 40;
-    static constexpr int lieutenant_defense_T2 = 100;
-
-    static constexpr int general_movement_T1 = 20;
-    static constexpr int general_movement_T2 = 40;
+    // 油井防御升级相关常数
+    static constexpr int OILWELL_DEFENCE_LEVELS = 4;
+    static constexpr double OILWELL_DEFENCE_VALUES[OILWELL_DEFENCE_LEVELS] = {1, 1.5, 2, 3};
+    static constexpr int OILWELL_DEFENCE_COST[OILWELL_DEFENCE_LEVELS] = {10, 15, 30, 1 << 30};
 
     // 召唤副将的开销
     static constexpr int SPAWN_GENERAL_COST = 50;
+
+    // 主将升级折扣常数
+    static constexpr int MAIN_GENERAL_DISCOUNT = 2;
+
+    // 将领产量升级相关常数
+    static constexpr int GENERAL_PRODUCTION_LEVELS = 3;
+    static constexpr int GENERAL_PRODUCTION_VALUES[GENERAL_PRODUCTION_LEVELS] = {1, 2, 4};
+    static constexpr int GENERAL_PRODUCTION_COST[GENERAL_PRODUCTION_LEVELS] = {40, 80, 1 << 30};
+
+    // 将领防御升级相关常数
+    static constexpr int GENERAL_DEFENCE_LEVELS = 3;
+    static constexpr int GENERAL_DEFENCE_VALUES[GENERAL_DEFENCE_LEVELS] = {1, 2, 3};
+    static constexpr int GENERAL_DEFENCE_COST[GENERAL_DEFENCE_LEVELS] = {40, 100, 1 << 30};
+
+    // 将领行动力升级相关常数
+    static constexpr int GENERAL_MOVEMENT_LEVELS = 3;
+    static constexpr int GENERAL_MOVEMENT_VALUES[GENERAL_MOVEMENT_LEVELS] = {1, 2, 4};
+    static constexpr int GENERAL_MOVEMENT_COST[GENERAL_MOVEMENT_LEVELS] = {20, 40, 1 << 30};
 
     // 将领的攻击半径（闭区间）
     static constexpr int GENERAL_ATTACK_RADIUS = 2;

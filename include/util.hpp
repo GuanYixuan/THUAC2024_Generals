@@ -621,7 +621,7 @@ bool production_up(const Coord& location, GameState &gamestate, int player) {
     if (cell.generals == nullptr) return false;
     if (cell.player != player) return false;
 
-    return cell.generals->production_up(location, gamestate, player);
+    return cell.generals->production_up(gamestate, player);
 }
 
 /* ### `bool defence_up(const Coord& location, GameState &gamestate, int player)`
@@ -637,7 +637,7 @@ bool defence_up(const Coord& location, GameState &gamestate, int player) {
     if (cell.generals == nullptr) return false;
     if (cell.player != player) return false;
 
-    return cell.generals->defence_up(location, gamestate, player);
+    return cell.generals->defence_up(gamestate, player);
 }
 
 /* ### `bool movement_up(const Coord& location, GameState &gamestate, int player)`
@@ -653,7 +653,7 @@ bool movement_up(const Coord& location, GameState &gamestate, int player) {
     if (cell.generals == nullptr) return false;
     if (cell.player != player) return false;
 
-    return cell.generals->movement_up(location, gamestate, player);
+    return cell.generals->movement_up(gamestate, player);
 }
 
 /* ### `bool tech_update(int tech_type, GameState &gamestate, int player)`
