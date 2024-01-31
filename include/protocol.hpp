@@ -40,17 +40,17 @@ std::tuple<int, GameState> read_init_map() {
         switch (int(generals[i]["Type"])) {
         case 1:
             cell.generals = new MainGenerals(id, player, position);
-            gamestate.generals.push_back(*cell.generals);
             break;
         case 2:
             cell.generals = new SubGenerals(id, player, position);
-            gamestate.generals.push_back(*cell.generals);
             break;
         case 3:
             cell.generals = new OilWell(id, player, position);
-            gamestate.generals.push_back(*cell.generals);
             break;
+        default:
+            assert(false);
         }
+        gamestate.generals.push_back(cell.generals);
     }
     return std::tuple<int, GameState>(my_seat, gamestate);
 }
@@ -58,29 +58,25 @@ std::tuple<int, GameState> read_init_map() {
  * @brief 读取敌方操作列表
  * @return a vector of operations
  */
-std::vector<Operation> read_enemy_operations()
-{
-    std::vector<Operation> operations;
-    std::vector<int> params; // 在哪里重置的？
-    Operation op;
+std::vector<Operation> read_enemy_operations() {
+    static std::vector<Operation> operations;
+    static std::vector<int> params;
     int param, op_type;
     char ch;
-    while (true)
-    {
+
+    operations.clear();
+    while (true) {
         std::cin >> op_type;
-        if (op_type == 8)
-        { // 操作结束
-            break;
-        }
-        while ((ch = getchar()) != '\n')
-        {
+        // 操作结束
+        if (op_type == 8) break;
+        // 读取参数
+        while ((ch = getchar()) != '\n') {
             std::cin >> param;
             params.push_back(param);
         }
-        op = Operation(static_cast<OperationType>(op_type), params);
-        operations.push_back(op);
+        operations.emplace_back(static_cast<OperationType>(op_type), params);
+        params.clear(); // 原本的代码并未进行此重置
     }
-
     return operations;
 }
 inline void convert_to_big_endian(const void *src, std::size_t size, void *dest)

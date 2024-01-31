@@ -25,12 +25,11 @@ bool call_generals(GameState &gamestate, int player, const Coord& location) {
     else if (cell.generals != nullptr) return false;
 
     // 创建一个新的将军
-    SubGenerals gen = SubGenerals(gamestate.next_generals_id++, player, location);
-    Generals *genPtr = &gen;
+    Generals *genPtr = new SubGenerals(gamestate.next_generals_id++, player, location);
     // 将新的将军放置在棋盘上的指定位置
     cell.generals = genPtr;
     // 将新的将军添加到游戏状态的将军列表中
-    gamestate.generals.push_back(gen);
+    gamestate.generals.push_back(genPtr);
     // 玩家的硬币减少50
     gamestate.coin[player] -= Constant::SPAWN_GENERAL_COST;
     return true;
@@ -392,8 +391,11 @@ bool skill_activate(int player, const Coord& location, const Coord& destination,
     if (player != 0 && player != 1) return false; // 如果玩家参数不是0或1，则返回false
     if (!location.in_map()) return false; // 如果位置坐标超出范围，则返回false
 
-    if (!destination.in_map()) return false; // 如果目的地坐标超出范围，则返回false
-    if (!destination.in_attack_range(location)) return false; // 如果目的地与当前位置之间的距离超过“攻击范围”，则返回false
+    // 只有前两种技能是有“目标位置”的
+    if (skillType == SkillType::SURPRISE_ATTACK || skillType == SkillType::ROUT) {
+        if (!destination.in_map()) return false; // 如果目的地坐标超出范围，则返回false
+        if (!destination.in_attack_range(location)) return false; // 如果目的地与当前位置之间的距离超过“攻击范围”，则返回false
+    }
 
     // 检查参数合理性
     if (gamestate[location].player != player) return false; // 如果指定位置上的玩家不是当前玩家，则返回false
@@ -446,7 +448,7 @@ bool handle_bomb_cell(GameState &gamestate, int x, int y) {
         auto it = gamestate.generals.begin();
         // 从将军列表中移除该将军
         while (it != gamestate.generals.end()) {
-            if (it->position == Coord{x, y}) {
+            if ((*it)->position == Coord{x, y}) {
                 it = gamestate.generals.erase(it);
                 break;
             }

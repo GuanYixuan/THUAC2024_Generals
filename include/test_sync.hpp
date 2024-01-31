@@ -26,17 +26,17 @@ void show_map(const GameState& state, std::ostream& f) {
         }
         f << "\n";
     }
-    for (const auto& element : state.generals) {
+    for (const Generals* element : state.generals) {
         int typenow;
         if (typeid(element) == typeid(MainGenerals)) typenow = 0;
         else if (typeid(element) == typeid(SubGenerals)) typenow = 1;
         else typenow = 2;
 
-        f << element.id << " ";
+        f << element->id << " ";
         f << typenow << " ";
-        f << element.player << " ";
-        f << element.position.x << " ";
-        f << element.position.y << "\n";
+        f << element->player << " ";
+        f << element->position.x << " ";
+        f << element->position.y << "\n";
     }
     f << '\n';
 }

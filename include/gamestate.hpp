@@ -215,12 +215,23 @@ public:
 // 格子类
 class Cell {
 public:
-    Coord position;  // 格子的位置坐标
-    CellType type; // 格子的类型
-    int player;  // 控制格子的玩家编号
-    Generals* generals;  // 格子上的将军对象指针
-    std::vector<SuperWeapon> weapon_activate;  // 已激活的超级武器列表
-    int army;  // 格子里的军队数量
+    // 格子的类型
+    CellType type;
+
+    // 控制格子的玩家编号
+    int player;
+
+    // 格子的位置坐标
+    Coord position;
+
+    // 格子上的将军对象指针，这与`GameState::generals`是连通的
+    Generals* generals;
+
+    // 格子里的军队数量
+    int army;
+
+    // 已激活的超级武器列表
+    std::vector<SuperWeapon> weapon_activate;
 
     Cell() noexcept : type(CellType::PLAIN), player(-1), generals(nullptr), army(0) {};
 
@@ -236,7 +247,7 @@ public:
 class GameState {
 public:
     int round; // 当前游戏回合数
-    std::vector<Generals> generals;
+    std::vector<Generals*> generals;
     int coin[Constant::PLAYER_COUNT]; // 每个玩家的金币数量列表，分别对应玩家1，玩家2
     std::vector<SuperWeapon> active_super_weapon;
     bool super_weapon_unlocked[Constant::PLAYER_COUNT]; // 超级武器是否解锁的列表，解锁了是true，分别对应玩家1，玩家2
@@ -267,7 +278,7 @@ public:
 
     // 寻找将军id对应的格子，找不到返回(-1,-1)
     Coord find_general_position_by_id(int general_id) const noexcept {
-        for (const Generals& gen : generals) if (gen.id == general_id) return gen.position;
+        for (const Generals* gen : generals) if (gen->id == general_id) return gen->position;
         return Coord(-1, -1);
     }
     // 更新游戏回合信息
@@ -319,9 +330,9 @@ void GameState::update_round() {
     for (auto &weapon : this->active_super_weapon) --weapon.rest;
 
     // cd和duration 减少
-    for (auto &gen : this->generals) {
-        for (auto &i : gen.skills_cd) if (i > 0) --i;
-        for (auto &i : gen.skill_duration) if (i > 0) --i;
+    for (Generals* gen : this->generals) {
+        for (auto &i : gen->skills_cd) if (i > 0) --i;
+        for (auto &i : gen->skill_duration) if (i > 0) --i;
     }
 
     // 移动步数恢复
