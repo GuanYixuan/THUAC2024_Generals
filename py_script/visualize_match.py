@@ -1,5 +1,6 @@
 import math
 import json
+import numpy as np
 import pandas as pd
 from PIL import Image, ImageDraw, ImageFont
 
@@ -149,7 +150,7 @@ class Board_drawer:
 
         x0, y0 = self.grid_top_left(grid_loc).round_tuple()
 
-        PATTERN_COLOR = (160, 160, 160)
+        PATTERN_COLOR = (192, 192, 192)
 
         # 斜线填充（表示沼泽）
         if pattern_code == 2:
@@ -172,13 +173,17 @@ class Board_drawer:
 class Match_visualizer:
 
     IMAGE_SIZE: Point2d = Point2d(1200, 600)
+    COLOR_MAP: Dict[int, str] = {0: 'red', 1: 'blue', -1: 'black'}
 
-    BOARD_OFFSET: Point2d = Point2d(50, 50)
-    RED_ACTION_OFFSET: Point2d = Point2d(600, 50)
-    BLUE_ACTION_OFFSET: Point2d = Point2d(600, 400)
+    BOARD_OFFSET: Point2d = Point2d(30, 30)
+    ROUND_INFO_OFFSET: Point2d = Point2d(BOARD_OFFSET.x + Board_drawer.IMAGE_SIZE + 30, 25)
+    ACTION_OFFSET: List[Point2d] = \
+        [Point2d(BOARD_OFFSET.x + Board_drawer.IMAGE_SIZE + 30, 100), Point2d(BOARD_OFFSET.x + Board_drawer.IMAGE_SIZE + 30, 300)]
 
     drawer: Board_drawer
     action_df: pd.DataFrame
+    player_action_df: List[pd.DataFrame]
+    important_action_df: List[pd.DataFrame]
 
     image: Image.Image
     draw: ImageDraw.ImageDraw
@@ -188,8 +193,10 @@ class Match_visualizer:
         self.drawer.cell_type_str = cell_type_str
 
         self.action_df = action_df
+        self.player_action_df = [self.action_df[self.action_df['player'] == i].reset_index(drop=True) for i in range(2)]
+        self.important_action_df = [df[(df["action_type"] >= 3) & (df["action_type"] <= 7)].reset_index(drop=True) for df in self.player_action_df]
 
-    def draw_call(self, map_matrix: List[List[Dict[str, "int | str"]]], round_number: int, action_number: int) -> None:
+    def draw_call(self, map_matrix: List[List[Dict[str, "int | str"]]], round_number: int, action_index: int) -> None:
         # 初始化图像
         self.image = Image.new('RGB', self.IMAGE_SIZE.round_tuple(), color='white')
         self.draw = ImageDraw.Draw(self.image)
@@ -200,42 +207,30 @@ class Match_visualizer:
         self.image.paste(self.drawer.image, self.BOARD_OFFSET.round_tuple())
 
         # 绘制动作表
-        self.dataframe_to_image(self.__get_action_slice(round_number, action_number, 0), self.RED_ACTION_OFFSET, round_number, action_number)
-        self.dataframe_to_image(self.__get_action_slice(round_number, action_number, 1), self.BLUE_ACTION_OFFSET, round_number, action_number)
+        self.dataframe_to_image(self.__get_action_slice(round_number, action_index, 0), self.ACTION_OFFSET[0], round_number, action_index)
+        self.dataframe_to_image(self.__get_action_slice(round_number, action_index, 1), self.ACTION_OFFSET[1], round_number, action_index)
 
-    def __get_action_slice(self, round_number: int, action_number: int, player: int) -> pd.DataFrame:
-        SLICE_RADIUS = 4
-        raw_index: int = self.action_df[(self.action_df['round'] == round_number) & (self.action_df['action_num'] == action_number)].index[0]
+        # 绘制回合信息
+        font = ImageFont.truetype('arial.ttf', 24)
+        action = self.action_df[(self.action_df["round"] == round_number) & (self.action_df["action_index"] == action_index)].iloc[0]
+        self.draw.text(self.ROUND_INFO_OFFSET.round_tuple(), "Round %d - Action %d" % (round_number, action_index),
+                       fill="black", font=font)
+        self.draw.text((self.ROUND_INFO_OFFSET + Point2d(0, font.getlength('hg') + 6)).round_tuple(), action["description"],
+                       fill=self.COLOR_MAP[action["player"]], font=font)
 
-        st_index = max(raw_index - 1, 0)
-        rem_index = SLICE_RADIUS
-        while st_index >= 0:
-            action_code: int = self.action_df.iloc[st_index]['action_code']
-            if self.action_df.iloc[st_index]['player'] == player and 3 <= action_code <= 7:
-                rem_index -= 1
-                if rem_index == 0:
-                    break
-            st_index -= 1
-        st_index = max(st_index, 0)
+    def __get_action_slice(self, round_number: int, action_index: int, player: int) -> pd.DataFrame:
+        SLICE_RADIUS = 3
 
-        ed_index = min(raw_index + 1, len(self.action_df) - 1)
-        rem_index = SLICE_RADIUS
-        while ed_index < len(self.action_df):
-            action_code: int = self.action_df.iloc[ed_index]['action_code']
-            if self.action_df.iloc[ed_index]['player'] == player and 3 <= action_code <= 7:
-                rem_index -= 1
-                if rem_index == 0:
-                    break
-            ed_index += 1
-        ed_index = min(ed_index, len(self.action_df) - 1)
+        df = self.important_action_df[player]
+        next_action_index: int = df.index[((df["round"] == round_number) & (df["action_index"] >= action_index)) | (df["round"] > round_number)].tolist()[0]
 
-        slice = self.action_df.iloc[st_index:ed_index+1]
-        return slice[(slice['player'] == player) & (slice['action_code'] >= 3) & (slice['action_code'] <= 7)]
+        return df.iloc[max(0, next_action_index - SLICE_RADIUS): min(len(df), next_action_index + SLICE_RADIUS + 1)]
 
-    def dataframe_to_image(self, df: pd.DataFrame, origin: Point2d, round_number: int, action_number: int) -> None:
+    def dataframe_to_image(self, df: pd.DataFrame, origin: Point2d, round_number: int, action_index: int) -> None:
         """将一个DataFrame作为表格绘制到图像中"""
 
-        df = df[["round", "action_num", "action_name", "readable_params"]]
+        df = df[["round", "action_index", "description", "remain_coins"]].copy()
+        df["description"] = df["description"].apply(lambda x: x[x.find(":")+2:])
 
         font = ImageFont.truetype('arial.ttf', 16)
         line_height = font.getlength('hg') + 4
@@ -258,7 +253,7 @@ class Match_visualizer:
         draw_offset.y += line_height
         for index, row in enumerate(df.itertuples(index=False)):
             draw_offset.x = origin_offset.x
-            if df.iloc[index]["round"] == round_number and df.iloc[index]["action_num"] == action_number:
+            if df.iloc[index]["round"] == round_number and df.iloc[index]["action_index"] == action_index:
                 self.draw.rectangle((origin_offset.x, draw_offset.y, origin_offset.x + total_width, draw_offset.y + line_height), fill='yellow')
             for i, value in enumerate(row):
                 cell_text = str(value)
@@ -273,70 +268,80 @@ def process_actions(file_name) -> pd.DataFrame:
     Mainly AIGC
     """
 
-    action_type_str: Dict[int, str] = {
-        1: "Move Soldiers", 2: "Move Generals" , 3: "Upgrade General", 4: "Use Skill",
-        5: "Upgrade Tech", 6: "Use Super Weapon", 7: "Recruit General", 8: "End of Round"}
-    upgrade_type_str: Dict[int, str] = { 1: "Produce", 2: "Defense", 3: "Mobility" }
-    skill_type_str: Dict[int, str] = { 1: "Rush", 2: "Strike", 3: "Command", 4: "Hold", 5: "Weaken" }
-    tech_type_str: Dict[int, str] = { 1: "Mobility", 2: "Immune Swamp", 3: "Immune Desert", 4: "Unlock Weapon" }
-    weapon_type_str: Dict[int, str] = { 1: "Nuke", 2: "Enhance", 3: "Teleport", 4: "Timestop" }
+    # Define constants for player names and action names
+    PLAYER_NAMES = {-1: "System", 0: "Red", 1: "Blue"}
+    GENERAL_TYPES = {1: "Main General", 2: "Sub General", 3: "Oil Field"}
+    UPGRADE_TYPES = {1: "Produce", 2: "Defense", 3: "Mobility"}
+    SKILL_NAMES = {1: "Rush", 2: "Strike", 3: "Command", 4: "Hold", 5: "Weaken"}
+    TECH_NAMES = {1: "Mobility", 2: "Immune Swamp", 3: "Immune Desert", 4: "Unlock Weapon"}
+    WEAPON_TYPES = {1: "Nuke", 2: "Enhance", 3: "Teleport", 4: "Timestop"}
 
-    actions = []
+    # Initialize an empty list to store action info
+    action_info_data = []
 
+    # Initialize variables to track the current round and action index
+    current_round = -1
+    action_index = 0
+
+    # Read the file and process each line
     with open(file_name, "r") as file:
-        last_round: int = 0
-        action_number: int = 0
         for line in file:
             data = json.loads(line)
-            action_code: int = data["Action"][0]
+            round_number = data["Round"]
+            player = data["Player"]
+            action = data["Action"]
+            remain_coins = np.nan if player == -1 else data["Coins"][player]
 
-            round_number: int = data["Round"]
-            player: int = data["Player"]
-            action_type = action_type_str[action_code]
-            raw_params: List[int] = data["Action"][1:]
+            # Check if the round has changed to reset the action index
+            if round_number != current_round:
+                current_round = round_number
+                action_index = 0
 
-            if round_number != last_round:
-                last_round = round_number
-                action_number = 0
-            action_number += 1
+            # Extract action details
+            action_code = action[0]
+            raw_params = action[1:]
 
-            if action_code == 1:
-                readable_params = "Move %d soldiers to (%d, %d)" % (raw_params[3], raw_params[0], raw_params[1])
-            elif action_code == 2:
-                readable_params = "Move general to (%d, %d)" % (raw_params[1], raw_params[2])
-            elif action_code == 3:
+            # Initialize description based on action_code
+            description = "Action description not set"  # Placeholder for actual description logic
+
+            # Generate description based on action type
+            if action_code == 1:  # Move Soldiers
+                description = f"{PLAYER_NAMES[player]}: Move {raw_params[3]} soldiers to ({raw_params[0]}, {raw_params[1]})"
+            elif action_code == 2:  # Move General
                 general_id = raw_params[0]
-                upgrade_type = upgrade_type_str[raw_params[1]]
-                for general in data["Generals"]:
-                    if general["Id"] == general_id:
-                        x, y = general["Position"]
-                        level = general["Level"][raw_params[1] - 1]
-                        if general["Type"] == 3:
-                            action_type = "Upgrade Oil Field"
-                        break
-                readable_params = f"{upgrade_type}{level} ({x}, {y})"
-            elif action_code == 4:
-                skill_type = skill_type_str[raw_params[1]]
-                if len(raw_params) > 2:
-                    x, y = raw_params[2], raw_params[3]
-                    readable_params = f"{skill_type} ({x}, {y})"
-                else:
-                    readable_params = skill_type
-            elif action_code == 5:
-                tech_type = tech_type_str[raw_params[0]]
-                readable_params = tech_type
-            elif action_code == 6:
-                weapon_type = weapon_type_str[raw_params[0]]
-                x, y = raw_params[1], raw_params[2]
-                readable_params = f"{weapon_type} ({x}, {y})"
-            elif action_code == 7:
-                x, y = raw_params
-                readable_params = f"({x}, {y})"
-            elif action_code == 8:
-                readable_params = ""
+                general_info = next((gen for gen in data["Generals"] if gen["Id"] == general_id), None)
+                general_type = GENERAL_TYPES[general_info["Type"]]
+                description = f"{PLAYER_NAMES[player]}: Move {general_type} to ({raw_params[1]}, {raw_params[2]})"
+            elif action_code == 3:  # Upgrade General
+                general_id = raw_params[0]
+                general_info = next((gen for gen in data["Generals"] if gen["Id"] == general_id), None)
+                general_type = GENERAL_TYPES[general_info["Type"]]
+                upgrade_type = UPGRADE_TYPES[raw_params[1]]
+                upgrade_level = general_info["Level"][raw_params[1]-1]
+                description = f"{PLAYER_NAMES[player]}: Upgrade {general_type}({general_info['Position'][0]}, {general_info['Position'][1]}): {upgrade_type}{upgrade_level}"
+            elif action_code == 4:  # Use Skill
+                skill_name = SKILL_NAMES[raw_params[1]]
+                description = f"{PLAYER_NAMES[player]}: {skill_name} ({raw_params[2]}, {raw_params[3]})"
+            elif action_code == 5:  # Upgrade Tech
+                tech_name = TECH_NAMES[raw_params[0]]
+                level = data["Tech_level"][player][raw_params[0]-1]
+                description = f"{PLAYER_NAMES[player]}: Upgrade {tech_name} to {level}"
+            elif action_code == 6:  # Use Super Weapon
+                weapon_type = WEAPON_TYPES[raw_params[0]]
+                description = f"{PLAYER_NAMES[player]}: {weapon_type} at ({raw_params[1]}, {raw_params[2]})"
+            elif action_code == 7:  # Recruit General
+                description = f"{PLAYER_NAMES[player]}: Recruit at ({raw_params[0]}, {raw_params[1]})"
+            elif action_code == 8:  # Round Settlement
+                description = "System: Round Settlement"
+            elif action_code == 9:  # Game End
+                reason = raw_params[1]
+                description = f"System: Player {raw_params[0]} wins: {reason}"
 
+            # Append action info to the list
+            action_info_data.append([round_number, action_index, player, action_code, description, raw_params, remain_coins])
 
-            actions.append([round_number, action_number, player, action_code, action_type, readable_params, raw_params])
+            # Increment action index for the next action
+            action_index += 1
 
-    df = pd.DataFrame(actions, columns=["round", "action_num", "player", "action_code", "action_name", "readable_params", "raw_params"])
-    return df
+    # Create DataFrame
+    return pd.DataFrame(action_info_data, columns=["round", "action_index", "player", "action_type", "description", "raw_params", "remain_coins"])
