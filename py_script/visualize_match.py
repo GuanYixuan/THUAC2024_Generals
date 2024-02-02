@@ -103,11 +103,15 @@ class Board_drawer:
     map_matrix: List[List[Dict[str, "int | str"]]]
     cell_type_str: str
 
-    def draw_call(self) -> None:
+    def draw_call(self, highlight_list: List[Point2d]) -> None:
         """根据map_matrix和cell_type_str绘制盘面示意图"""
         # 初始化图像
         self.image = Image.new('RGB', (self.IMAGE_SIZE + 5, self.IMAGE_SIZE + 5), color='white')
         self.draw = ImageDraw.Draw(self.image)
+
+        # 绘制背景色
+        for grid in highlight_list:
+            self.highlight_cell(grid, 'yellow')
 
         # 绘制地形
         for x in range(self.MAP_SIZE):
@@ -143,6 +147,10 @@ class Board_drawer:
     def grid_bottom_right(self, loc: Point2d) -> Point2d:
         """根据所给地图坐标`loc`（左下角为原点）返回其在图像中（左上角为原点）右下角的像素位置"""
         return Point2d((loc.x + 1) * self.GRID_SIZE, (self.MAP_SIZE - loc.y) * self.GRID_SIZE)
+
+    def highlight_cell(self, grid_loc: Point2d, color: str) -> None:
+        """高亮给定的地图格`grid_loc`"""
+        self.draw.rectangle((self.grid_top_left(grid_loc).round_tuple(), self.grid_bottom_right(grid_loc).round_tuple()), fill=color, width=0)
 
     def fill_cell(self, grid_loc: Point2d, pattern_code: int) -> None:
         """向给定地图格`grid_loc`内填充指定图案"""
@@ -201,9 +209,11 @@ class Match_visualizer:
         self.image = Image.new('RGB', self.IMAGE_SIZE.round_tuple(), color='white')
         self.draw = ImageDraw.Draw(self.image)
 
+        action = self.action_df[(self.action_df["round"] == round_number) & (self.action_df["action_index"] == action_index)].iloc[0]
+
         # 绘制盘面
         self.drawer.map_matrix = map_matrix
-        self.drawer.draw_call()
+        self.drawer.draw_call(self.__get_highlight_list(action))
         self.image.paste(self.drawer.image, self.BOARD_OFFSET.round_tuple())
 
         # 绘制动作表
@@ -212,11 +222,20 @@ class Match_visualizer:
 
         # 绘制回合信息
         font = ImageFont.truetype('arial.ttf', 24)
-        action = self.action_df[(self.action_df["round"] == round_number) & (self.action_df["action_index"] == action_index)].iloc[0]
+
         self.draw.text(self.ROUND_INFO_OFFSET.round_tuple(), "Round %d - Action %d" % (round_number, action_index),
                        fill="black", font=font)
         self.draw.text((self.ROUND_INFO_OFFSET + Point2d(0, font.getlength('hg') + 6)).round_tuple(), action["description"],
                        fill=self.COLOR_MAP[action["player"]], font=font)
+
+    def __get_highlight_list(self, action: pd.Series) -> List[Point2d]:
+        """根据动作信息返回需要高亮的格子"""
+        desc: str = action["description"]
+        if desc.find("(") != -1 and desc.find(")") != -1 and desc.find("(") < desc.find(")"):
+            x, y = map(int, desc[desc.find("(")+1:desc.find(")")].split(","))
+            return [Point2d(x, y)]
+        else:
+            return []
 
     def __get_action_slice(self, round_number: int, action_index: int, player: int) -> pd.DataFrame:
         SLICE_RADIUS = 3
@@ -238,7 +257,7 @@ class Match_visualizer:
         # Calculate column widths based on the maximum width of content in each column
         column_widths = [max(font.getlength(str(df[col].iloc[i])) for i in range(len(df))) + 10 for col in df.columns]
         column_widths = [max(w, font.getlength(col) + 10) for w, col in zip(column_widths, df.columns)]
-        total_width = sum(column_widths) + (len(df.columns) + 1) * 5
+        total_width = sum(column_widths)
 
         origin_offset = origin + Point2d(10, 10)
 
@@ -253,7 +272,10 @@ class Match_visualizer:
         draw_offset.y += line_height
         for index, row in enumerate(df.itertuples(index=False)):
             draw_offset.x = origin_offset.x
-            if df.iloc[index]["round"] == round_number and df.iloc[index]["action_index"] == action_index:
+            r, ind = df.iloc[index]["round"], df.iloc[index]["action_index"]
+            if r < round_number or (r == round_number and ind < action_index):
+                self.draw.rectangle((origin_offset.x, draw_offset.y, origin_offset.x + total_width, draw_offset.y + line_height), fill='lightgray')
+            elif r == round_number and ind == action_index:
                 self.draw.rectangle((origin_offset.x, draw_offset.y, origin_offset.x + total_width, draw_offset.y + line_height), fill='yellow')
             for i, value in enumerate(row):
                 cell_text = str(value)
@@ -275,6 +297,7 @@ def process_actions(file_name) -> pd.DataFrame:
     SKILL_NAMES = {1: "Rush", 2: "Strike", 3: "Command", 4: "Hold", 5: "Weaken"}
     TECH_NAMES = {1: "Mobility", 2: "Immune Swamp", 3: "Immune Desert", 4: "Unlock Weapon"}
     WEAPON_TYPES = {1: "Nuke", 2: "Enhance", 3: "Teleport", 4: "Timestop"}
+    DIRECTIONS: Dict[int, Point2d] = {1: Point2d(-1, 0), 2: Point2d(1, 0), 3: Point2d(0, -1), 4: Point2d(0, 1)}
 
     # Initialize an empty list to store action info
     action_info_data = []
@@ -306,7 +329,8 @@ def process_actions(file_name) -> pd.DataFrame:
 
             # Generate description based on action type
             if action_code == 1:  # Move Soldiers
-                description = f"{PLAYER_NAMES[player]}: Move {raw_params[3]} soldiers to ({raw_params[0]}, {raw_params[1]})"
+                dest = Point2d(raw_params[0], raw_params[1]) + DIRECTIONS[raw_params[2]]
+                description = f"{PLAYER_NAMES[player]}: Move {raw_params[3]} soldiers to ({dest.x}, {dest.y})"
             elif action_code == 2:  # Move General
                 general_id = raw_params[0]
                 general_info = next((gen for gen in data["Generals"] if gen["Id"] == general_id), None)
