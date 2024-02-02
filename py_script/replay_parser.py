@@ -6,7 +6,7 @@ import pandas as pd
 from enum import IntEnum
 from dataclasses import dataclass
 
-from typing import Tuple, List, Dict, Any
+from typing import Optional, Tuple, List, Dict, Any
 from typing import Sequence
 
 import os
@@ -24,6 +24,8 @@ class Point2d:
         self.y = y0
     def __str__(self) -> str:
         return "(%.2f, %.2f)" % (self.x, self.y)
+    def __repr__(self) -> str:
+        return self.__str__()
     @classmethod
     def from_tuple(cls, dot: "Sequence[float] | Point2d") -> "Point2d":
         """用二元组构造Point对象"""
@@ -42,6 +44,10 @@ class Point2d:
     def __len__(self) -> int:
         return 2
 
+    def __eq__(self, other: "Point2d") -> bool:
+        return self.x == other.x and self.y == other.y
+    def __ne__(self, other: "Point2d") -> bool:
+        return not self.__eq__(other)
     def __add__(self, other: "Point2d | float") -> "Point2d":
         if isinstance(other, Point2d):
             return Point2d(self.x + other.x, self.y + other.y)
@@ -102,7 +108,6 @@ class TechType(IntEnum):
     IMMUNE = 2
     UNLOCK = 3
 
-
 @dataclass
 class Game_snapshot:
     """保存对局中的一个瞬间"""
@@ -113,19 +118,20 @@ class Game_snapshot:
     generals: List[General_snapshot]
     coin: List[int] # 玩家的石油数
 
-    active_super_weapon: List[SuperWeapon]
+    # active_super_weapon: List[SuperWeapon] # 生效中的超级武器，尚未实现
     super_weapon_cd: List[int]
     tech_level: List[List[int]]
     # 科技等级列表，第一层对应玩家一，玩家二，第二层分别对应行动力，攀岩，免疫沼泽，超级武器
 
-    rest_move_step: List[int]
+    remaining_moves: List[int]
     board: List[List[Cell]] # 游戏棋盘
 
-    next_generals_id: int = 0
-    winner: int = -1
-
-
-
+    def find_general_at(self, position: Point2d) -> Optional[General_snapshot]:
+        """返回位于指定位置的将军"""
+        for general in self.generals:
+            if general.position == position:
+                return general
+        return None
 
 class Replay_parser:
     STATE_KEYS: List[str] = ["round", "action_index"]
@@ -163,11 +169,6 @@ class Replay_parser:
                 data: Dict[str, Any] = json.loads(line)
                 round_number: int = data["Round"]
                 action_type: int = data["Action"][0]
-                state_key: List[int] = [round_number, action_index]
-
-                if action_type == 9:  # Game End
-                    action_info_data.append(state_key + self.process_actions(data))
-                    break
 
                 # Check if the round has changed to reset the action index
                 if round_number != current_round:
@@ -177,6 +178,12 @@ class Replay_parser:
                     # 第0回合保存地形数据
                     if round_number == 0:
                         pickle.Pickler(open(os.path.join(output_dir, "terrain.zip"), "wb")).dump(data["Cell_type"])
+
+                state_key: List[int] = [round_number, action_index]
+
+                if action_type == 9:  # Game End
+                    action_info_data.append(state_key + self.process_actions(data))
+                    break
 
                 self.update_map_from_json(data)
                 if action_type == 8: self.refresh_remaining_moves(data)
@@ -246,7 +253,6 @@ class Replay_parser:
         """
 
         # Define constants for player names and action names
-        PLAYER_NAMES = {-1: "System", 0: "Red", 1: "Blue"}
         GENERAL_TYPES = {1: "Main General", 2: "Sub General", 3: "Oil Field"}
         UPGRADE_TYPES = {1: "Produce", 2: "Defense", 3: "Mobility"}
         SKILL_NAMES = {1: "Rush", 2: "Strike", 3: "Command", 4: "Hold", 5: "Weaken"}
@@ -268,7 +274,7 @@ class Replay_parser:
         # Generate description based on action type
         if action_code == 1:  # Move Soldiers
             dest = Point2d(raw_params[0], raw_params[1]) + DIRECTIONS[raw_params[2]]
-            description = f"{PLAYER_NAMES[player]}: Move {raw_params[3]} soldiers to ({dest.x}, {dest.y})"
+            description = f"Move {raw_params[3]} soldiers to ({dest.x}, {dest.y})"
 
             self.player_remaining_moves[player] -= 1
         elif action_code == 2:  # Move General
@@ -276,7 +282,7 @@ class Replay_parser:
             general_info = next((gen for gen in data["Generals"] if gen["Id"] == general_id), None)
             assert general_info is not None
             general_type = GENERAL_TYPES[general_info["Type"]]
-            description = f"{PLAYER_NAMES[player]}: Move {general_type} to ({raw_params[1]}, {raw_params[2]})"
+            description = f"Move {general_type} to ({raw_params[1]}, {raw_params[2]})"
 
             self.general_remaining_moves[general_id] -= 1 # 【如果一步移动多格，则此处是错的】
         elif action_code == 3:  # Upgrade General
@@ -286,19 +292,19 @@ class Replay_parser:
             general_type = GENERAL_TYPES[general_info["Type"]]
             upgrade_type = UPGRADE_TYPES[raw_params[1]]
             upgrade_level = general_info["Level"][raw_params[1]-1]
-            description = f"{PLAYER_NAMES[player]}: Upgrade {general_type}({general_info['Position'][0]}, {general_info['Position'][1]}): {upgrade_type}{upgrade_level}"
+            description = f"Upgrade {general_type}({general_info['Position'][0]}, {general_info['Position'][1]}): {upgrade_type}{upgrade_level}"
         elif action_code == 4:  # Use Skill
             skill_name = SKILL_NAMES[raw_params[1]]
-            description = f"{PLAYER_NAMES[player]}: {skill_name} ({raw_params[2]}, {raw_params[3]})"
+            description = f"{skill_name} ({raw_params[2]}, {raw_params[3]})"
         elif action_code == 5:  # Upgrade Tech
             tech_name = TECH_NAMES[raw_params[0]]
             level = data["Tech_level"][player][raw_params[0]-1]
-            description = f"{PLAYER_NAMES[player]}: Upgrade {tech_name} to {level}"
+            description = f"Upgrade {tech_name} to {level}"
         elif action_code == 6:  # Use Super Weapon
             weapon_type = WEAPON_TYPES[raw_params[0]]
-            description = f"{PLAYER_NAMES[player]}: {weapon_type} at ({raw_params[1]}, {raw_params[2]})"
+            description = f"{weapon_type} at ({raw_params[1]}, {raw_params[2]})"
         elif action_code == 7:  # Recruit General
-            description = f"{PLAYER_NAMES[player]}: Recruit at ({raw_params[0]}, {raw_params[1]})"
+            description = f"Recruit at ({raw_params[0]}, {raw_params[1]})"
 
             self.general_remaining_moves[data["Generals"][-1]["Id"]] = 1 # 【副将一经出现则立即有行动力，此处存疑】
         elif action_code == 8:  # Round Settlement
@@ -307,3 +313,88 @@ class Replay_parser:
             description = f"System: Player {player} wins: {data['Content']}"
 
         return [player, action_code, description, raw_params, remain_coins]
+
+class Replay_loader:
+
+    replay_dir: str
+    replay_id: str
+    replay_path: str
+
+    curr_round: int
+    curr_action_index: int
+    curr_action_info: pd.Series
+    gamestate: Game_snapshot
+
+    terrain: str
+    action_info: pd.DataFrame
+    global_info: pd.DataFrame
+    general_info: pd.DataFrame
+
+    def __init__(self, replay_dir: str, replay_id: str) -> None:
+        self.change_file(replay_id, replay_dir)
+
+    def change_file(self, replay_id: str, replay_dir: Optional[str] = None) -> None:
+        """切换（加载）回放文件夹"""
+        if replay_dir is not None:
+            self.replay_dir = replay_dir
+        self.replay_id = replay_id
+        self.replay_path = os.path.join(self.replay_dir, self.replay_id)
+
+        # 加载数据
+        self.terrain = pickle.load(open(os.path.join(self.replay_path, "terrain.zip"), "rb"))
+        self.action_info = pd.read_pickle(os.path.join(self.replay_path, "action_info.zip"))
+        self.global_info = pd.read_pickle(os.path.join(self.replay_path, "global_info.zip"))
+        self.general_info = pd.read_pickle(os.path.join(self.replay_path, "general_info.zip"))
+
+        # 从初始状态开始
+        self.curr_round = 0
+        self.curr_action_index = 0
+        self.jump_to(0, 0)
+
+    def jump_to(self, round_index: int, action_index: int) -> None:
+        """跳转到指定时间点"""
+
+        state_key = [round_index, action_index]
+
+        global_line = self.global_info[np.all(self.global_info[Replay_parser.STATE_KEYS] == state_key, axis=1)].iloc[0]
+        general_info = self.general_info[np.all(self.general_info[Replay_parser.STATE_KEYS] == state_key, axis=1)]
+
+        self.curr_action_info = self.action_info[np.all(self.action_info[Replay_parser.STATE_KEYS] == state_key, axis=1)].iloc[0]
+
+        # 建立将领列表
+        general_list: List[General_snapshot] = []
+        for ind, row in general_info.iterrows():
+            general_list.append(General_snapshot(
+                row["id"], row["alive"], row["player"], row["type"],
+                Point2d.from_tuple(row["position"]), row["level"], row["cd"], row["skill_state"], row["remaining_moves"]
+            ))
+
+        # 建立地图
+        soldier_matrix: np.ndarray = global_line["cell_soldier"]
+        owner_matrix: np.ndarray = global_line["cell_owner"]
+        board = [[Cell(int(self.terrain[MAP_SIZE * x + y]), owner_matrix[x][y], soldier_matrix[x][y]) for y in range(MAP_SIZE)] for x in range(MAP_SIZE)]
+
+        self.gamestate = Game_snapshot(
+            round_index, action_index,
+            general_list, global_line["coin"],
+            global_line["cd"], global_line["tech_level"], global_line["remaining_moves"],
+            board
+        )
+
+        self.curr_round = round_index
+        self.curr_action_index = action_index
+
+    def next(self) -> bool:
+        """下一个状态，返回是否有下一个状态"""
+
+        state_key = [self.curr_round, self.curr_action_index]
+        curr_index = self.action_info[np.all(self.action_info[Replay_parser.STATE_KEYS] == state_key, axis=1)].index[0]
+        if curr_index == len(self.action_info) - 1:
+            return False
+
+        curr_index += 1
+        if self.action_info.iloc[curr_index]["action_type"] == 9:
+            return False
+
+        self.jump_to(*self.action_info.iloc[curr_index][Replay_parser.STATE_KEYS])
+        return True
