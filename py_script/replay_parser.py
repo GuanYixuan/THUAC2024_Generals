@@ -14,6 +14,12 @@ os.chdir(os.path.dirname(__file__))
 
 MAP_SIZE = 15
 
+PLAYER_MOBILITY_LEVEL: Dict[int, int] = {1: 2, 2: 5, 3: 8}
+GENERAL_PRODUCTION_LEVEL: Dict[int, int] = {1: 1, 2: 2, 3: 4, 4: 6}
+GENERAL_DEFENCE_LEVEL: Dict[int, int] = {1: 1, 2: 2, 3: 3}
+GENERAL_MOBILITY_LEVEL: Dict[int, int] = {1: 1, 2: 2, 3: 4}
+OIL_FIELD_DEFENCE_LEVEL: Dict[int, float] = {1: 1, 2: 1.5, 3: 2, 4: 3}
+
 class Point2d:
     """二维向量/二维点类"""
     x : float
@@ -84,6 +90,9 @@ class General_snapshot:
     skill_duration: List[int]
     remaining_moves: int
 
+    def is_oil_field(self) -> bool:
+        return self.type == 3
+
 @dataclass
 class Cell:
     type: int
@@ -104,8 +113,8 @@ class QualityType(IntEnum):
 
 class TechType(IntEnum):
     MOBILITY = 0
-    CLIMB = 1
-    IMMUNE = 2
+    IMMUNE_SWAMP = 1
+    IMMUNE_SAND = 2
     UNLOCK = 3
 
 @dataclass
@@ -132,6 +141,28 @@ class Game_snapshot:
             if general.position == position:
                 return general
         return None
+
+    def sum_soldiers(self, player: Optional[int]) -> int:
+        """返回指定玩家的总士兵数"""
+        if player is None:
+            return np.sum([cell.army for row in self.board for cell in row])
+        return np.sum([cell.army for row in self.board for cell in row if cell.player == player])
+
+    def calc_oil_production(self, player: int) -> int:
+        """计算指定玩家一回合的石油产量"""
+        production: int = 0
+        for oil_field in self.generals:
+            if oil_field.player == player and oil_field.is_oil_field():
+                production += GENERAL_PRODUCTION_LEVEL[oil_field.level[QualityType.PRODUCTION]]
+        return production
+
+    def calc_soldier_production(self, player: int) -> int:
+        """计算指定玩家一回合的士兵招募量"""
+        production: int = 0
+        for general in self.generals:
+            if general.player == player and (not general.is_oil_field()):
+                production += GENERAL_PRODUCTION_LEVEL[general.level[QualityType.PRODUCTION]]
+        return production
 
 class Replay_parser:
     STATE_KEYS: List[str] = ["round", "action_index"]
@@ -195,7 +226,7 @@ class Replay_parser:
                 global_info_data.append(state_key + [
                     np.array([[cell['soldiers'] for cell in row] for row in self.map_matrix]),
                     np.array([[cell['owner'] for cell in row] for row in self.map_matrix]),
-                    data["Coins"], self.player_remaining_moves,
+                    data["Coins"], self.player_remaining_moves.copy(),
                     data["Tech_level"], data["Weapon_cds"]
                 ])
 
@@ -236,9 +267,6 @@ class Replay_parser:
     def refresh_remaining_moves(self, data: Dict[str, Any]) -> None:
         """重置将领与玩家的剩余步数"""
         assert data["Action"][0] == 8  # Round Settlement
-
-        PLAYER_MOBILITY_LEVEL: Dict[int, int] = {1: 2, 2: 5, 3: 8}
-        GENERAL_MOBILITY_LEVEL: Dict[int, int] = {1: 1, 2: 2, 3: 4}
 
         for player in range(2):
             self.player_remaining_moves[player] = PLAYER_MOBILITY_LEVEL[data["Tech_level"][player][TechType.MOBILITY]]

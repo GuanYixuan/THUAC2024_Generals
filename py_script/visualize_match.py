@@ -7,19 +7,23 @@ from typing import Tuple, List, Dict
 import os
 os.chdir(os.path.dirname(__file__))
 
-from replay_parser import Game_snapshot, Point2d
+from replay_parser import Game_snapshot, QualityType, TechType, Point2d
 from replay_parser import Replay_parser, Replay_loader
+from replay_parser import PLAYER_MOBILITY_LEVEL, GENERAL_PRODUCTION_LEVEL, GENERAL_DEFENCE_LEVEL, GENERAL_MOBILITY_LEVEL, OIL_FIELD_DEFENCE_LEVEL
 
 class Board_drawer:
     """盘面示意图绘制器"""
 
     MAP_SIZE: int = 15
-    GRID_SIZE: int = 40
+    GRID_SIZE: int = 45
     IMAGE_SIZE: int = MAP_SIZE * GRID_SIZE
 
     TAG_OFFSET: Point2d = Point2d(GRID_SIZE - 10, 1)
+    GENERAL_LEVEL_OFFSET: Point2d = Point2d(3, GRID_SIZE - 15)
     TEXT_OFFSET: Point2d = Point2d(3, 3)
-    TEXT_COLOR: Dict[int, str] = {0: 'red', 1: 'blue', -1: 'gray'}
+
+    CELL_COLOR: Tuple[Tuple[int, int, int], Tuple[int, int, int]] = ((255, 210, 210), (160, 210, 255))
+    MAIN_GENERAL_COLOR: Tuple[Tuple[int, int, int], Tuple[int, int, int]] = ((255, 130, 110), (40, 185, 255))
 
     image: Image.Image
     draw: ImageDraw.ImageDraw
@@ -36,6 +40,21 @@ class Board_drawer:
         self.draw = ImageDraw.Draw(self.image)
 
         # 绘制背景色
+        for general in gamestate.generals:
+            if general.is_oil_field():
+                self.highlight_cell(general.position, (210, 210, 140))
+
+        for x in range(self.MAP_SIZE):
+            for y in range(self.MAP_SIZE):
+                cell = gamestate.board[x][y]
+                if cell.army == 0 or cell.player == -1: continue
+
+                self.highlight_cell(Point2d(x, y), self.CELL_COLOR[cell.player])
+
+        for general in gamestate.generals:
+            if general.type == 1:
+                self.highlight_cell(general.position, self.MAIN_GENERAL_COLOR[general.player])
+
         for grid in highlight_list:
             self.highlight_cell(grid, 'yellow')
 
@@ -51,7 +70,7 @@ class Board_drawer:
             self.draw.line((i*self.GRID_SIZE, 0, i*self.GRID_SIZE, self.IMAGE_SIZE), fill='black')
 
         # 写数字
-        font = ImageFont.truetype('arial.ttf', 16)
+        soldier_num_font = ImageFont.truetype('arial.ttf', 16)
         for x in range(self.MAP_SIZE):
             for y in range(self.MAP_SIZE):
                 cell = gamestate.board[x][y]
@@ -59,21 +78,32 @@ class Board_drawer:
                 if cell.army > 0:
                     self.draw.text((self.grid_top_left(Point2d(x, y)) + self.TEXT_OFFSET).round_tuple(),
                                    str(cell.army),
-                                   fill=self.TEXT_COLOR[cell.player], font=font)
+                                   fill='black', font=soldier_num_font)
 
         # 做特殊标记
+        tag_font = ImageFont.truetype('arial.ttf', 16)
+        level_font = ImageFont.truetype('arial.ttf', 12)
         for x in range(self.MAP_SIZE):
             for y in range(self.MAP_SIZE):
                 general = gamestate.find_general_at(Point2d(x, y))
                 if general is None: continue
 
                 tag = '*'
+                level = "+%d, " % GENERAL_PRODUCTION_LEVEL[general.level[QualityType.PRODUCTION]]
                 if general.type == 1: tag = '$'
                 elif general.type == 2: tag = '+'
 
-                self.draw.text((self.grid_top_left(Point2d(x, y)) + self.TAG_OFFSET).round_tuple(),
-                                tag,
-                                fill=self.TEXT_COLOR[general.player], font=font)
+                if not general.is_oil_field():
+                    level += "%d" % GENERAL_DEFENCE_LEVEL[general.level[QualityType.DEFENCE]]
+                    level += ", %d" % GENERAL_MOBILITY_LEVEL[general.level[QualityType.MOBILITY]]
+                else:
+                    level += "%.1f" % OIL_FIELD_DEFENCE_LEVEL[general.level[QualityType.DEFENCE]]
+
+                self.draw.text((self.grid_top_left(Point2d(x, y)) + self.TAG_OFFSET).round_tuple(), tag,
+                                fill="black", font=tag_font)
+                if general.player != -1:
+                    self.draw.text((self.grid_top_left(Point2d(x, y)) + self.GENERAL_LEVEL_OFFSET).round_tuple(), level,
+                                fill="black", font=level_font)
 
     def grid_top_left(self, loc: Point2d) -> Point2d:
         """根据所给地图坐标`loc`（左下角为原点）返回其在图像中（左上角为原点）左上角的像素位置"""
@@ -83,7 +113,7 @@ class Board_drawer:
         """根据所给地图坐标`loc`（左下角为原点）返回其在图像中（左上角为原点）右下角的像素位置"""
         return Point2d((loc.x + 1) * self.GRID_SIZE, (self.MAP_SIZE - loc.y) * self.GRID_SIZE)
 
-    def highlight_cell(self, grid_loc: Point2d, color: str) -> None:
+    def highlight_cell(self, grid_loc: Point2d, color: "str | Tuple[int, int, int]") -> None:
         """高亮给定的地图格`grid_loc`"""
         self.draw.rectangle((self.grid_top_left(grid_loc).round_tuple(), self.grid_bottom_right(grid_loc).round_tuple()), fill=color, width=0)
 
@@ -93,11 +123,11 @@ class Board_drawer:
 
         x0, y0 = self.grid_top_left(grid_loc).round_tuple()
 
-        PATTERN_COLOR = (192, 192, 192)
+        PATTERN_COLOR = (140, 140, 140)
 
         # 斜线填充（表示沼泽）
         if pattern_code == 2:
-            LINE_SPACING = 7
+            LINE_SPACING = 8
             LINE_WIDTH = 1
             for x in range(x0, x0 + self.GRID_SIZE, LINE_SPACING):
                 self.draw.line([(x, y0), (x0 + self.GRID_SIZE, y0 + self.GRID_SIZE - (x - x0))], fill=PATTERN_COLOR, width=LINE_WIDTH)
@@ -105,7 +135,7 @@ class Board_drawer:
                 self.draw.line([(x0, y), (x0 + self.GRID_SIZE - (y - y0), y0 + self.GRID_SIZE)], fill=PATTERN_COLOR, width=LINE_WIDTH)
         # 点填充（表示沙漠）
         elif pattern_code == 1:
-            DOT_SPACING = 8
+            DOT_SPACING = 9
             DOT_RADIUS = 1
             for i in range(x0 + DOT_SPACING, x0 + self.GRID_SIZE, DOT_SPACING):
                 for j in range(y0 + DOT_SPACING, y0 + self.GRID_SIZE, DOT_SPACING):
@@ -115,13 +145,15 @@ class Board_drawer:
 
 class Match_visualizer:
 
-    IMAGE_SIZE: Point2d = Point2d(1300, 660)
+    IMAGE_SIZE: Point2d = Point2d(1330, Board_drawer.IMAGE_SIZE + 60)
     COLOR_MAP: Dict[int, str] = {0: 'red', 1: 'blue', -1: 'black'}
 
     BOARD_OFFSET: Point2d = Point2d(30, 30)
     ROUND_INFO_OFFSET: Point2d = Point2d(BOARD_OFFSET.x + Board_drawer.IMAGE_SIZE + 30, 25)
+    PLAYER_INFO_OFFSET: List[Point2d] = \
+        [Point2d(BOARD_OFFSET.x + Board_drawer.IMAGE_SIZE + 30, 120), Point2d(BOARD_OFFSET.x + Board_drawer.IMAGE_SIZE + 30, 390)]
     ACTION_OFFSET: List[Point2d] = \
-        [Point2d(BOARD_OFFSET.x + Board_drawer.IMAGE_SIZE + 30, 100), Point2d(BOARD_OFFSET.x + Board_drawer.IMAGE_SIZE + 30, 300)]
+        [Point2d(BOARD_OFFSET.x + Board_drawer.IMAGE_SIZE + 30, 170), Point2d(BOARD_OFFSET.x + Board_drawer.IMAGE_SIZE + 30, 440)]
 
     loader: Replay_loader
 
@@ -157,9 +189,10 @@ class Match_visualizer:
 
         state_key: Tuple[int, int] = (self.loader.curr_round, self.loader.curr_action_index)
         action = self.action_df[np.all(self.action_df[Replay_parser.STATE_KEYS] == state_key, axis=1)].iloc[0]
+        gamestate = self.loader.gamestate
 
         # 绘制盘面
-        self.drawer.draw_call(self.loader.gamestate , self.__get_highlight_list(action))
+        self.drawer.draw_call(gamestate , self.__get_highlight_list(action))
         self.image.paste(self.drawer.image, self.BOARD_OFFSET.round_tuple())
 
         # 绘制动作表
@@ -167,12 +200,26 @@ class Match_visualizer:
         self.dataframe_to_image(self.__get_action_slice(*state_key, 1), self.ACTION_OFFSET[1], *state_key)
 
         # 绘制回合信息
-        font = ImageFont.truetype('arial.ttf', 24)
-
+        round_info_font = ImageFont.truetype('arial.ttf', 24)
         self.draw.text(self.ROUND_INFO_OFFSET.round_tuple(), "Round %d - Action %d" % state_key,
-                       fill="black", font=font)
-        self.draw.text((self.ROUND_INFO_OFFSET + Point2d(0, font.getlength('hg') + 6)).round_tuple(), action["description"],
-                       fill=self.COLOR_MAP[action["player"]], font=font)
+                       fill="black", font=round_info_font)
+        self.draw.text((self.ROUND_INFO_OFFSET + Point2d(0, round_info_font.getlength('hg') + 6)).round_tuple(), action["description"],
+                       fill=self.COLOR_MAP[action["player"]], font=round_info_font)
+
+        # 显示玩家信息
+        player_info_font = ImageFont.truetype('arial.ttf', 21)
+        for i in range(2):
+            player_info = "%3d (+%2d) oil, %3d (+%2d) soldier, %d/%d steps left\n" \
+                % (gamestate.coin[i], gamestate.calc_oil_production(i),
+                   gamestate.sum_soldiers(i), gamestate.calc_soldier_production(i),
+                   gamestate.remaining_moves[i], PLAYER_MOBILITY_LEVEL[gamestate.tech_level[i][TechType.MOBILITY]])
+            if gamestate.tech_level[i][TechType.IMMUNE_SWAMP]:
+                player_info += "Swamp, "
+            if gamestate.tech_level[i][TechType.IMMUNE_SAND]:
+                player_info += "Desert, "
+            if gamestate.tech_level[i][TechType.UNLOCK]:
+                player_info += "SW cd: %d" % gamestate.super_weapon_cd[i]
+            self.draw.text(self.PLAYER_INFO_OFFSET[i].round_tuple(), player_info, fill=self.COLOR_MAP[i], font=player_info_font)
 
     def __get_highlight_list(self, action: pd.Series) -> List[Point2d]:
         """根据动作信息返回需要高亮的格子"""
