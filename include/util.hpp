@@ -1,9 +1,21 @@
 #pragma once
 #include <vector>
+#include <cstdarg>
 #include <cassert>
 #include <cmath>
-#include <set>
 #include "gamestate.hpp"
+
+// 输出至`std::string`版本的`printf`
+[[nodiscard]] std::string wrap(const char *format, ...) {
+    static char buffer[1024];
+
+    va_list args;
+    va_start(args, format);
+    vsprintf(buffer, format, args);
+    va_end(args);
+
+    return std::string(buffer);
+}
 
 /* ### `bool call_generals(GameState &gamestate, int player, const Coord& location)`
 
@@ -159,7 +171,8 @@ bool army_move(const Coord& location, GameState &gamestate, int player, Directio
     if (num > gamestate.board[x][y].army - 1) return false;
 
     for (SuperWeapon &sw : gamestate.active_super_weapon) { // 超级武器效果
-        if (sw.position == location && sw.rest && sw.type == WeaponType::TRANSMISSION) return false; // 超时空传送眩晕
+        if (sw.position == location && sw.rest &&
+            sw.type == WeaponType::TRANSMISSION && sw.player == player) return false; // 超时空传送眩晕
         if (std::abs(sw.position.x - x) <= 1 && std::abs(sw.position.y - y) <= 1 && sw.rest && sw.type == WeaponType::TIME_STOP)
             return false; // 时间暂停效果
     }
@@ -218,8 +231,8 @@ std::pair<bool, int> check_general_movement(const Coord& location, GameState &ga
     if (oilWellPtr) return std::make_pair(false, -1);
 
     for (SuperWeapon &sw : gamestate.active_super_weapon) {
-        if (sw.position == location && sw.rest && sw.type == WeaponType::TRANSMISSION)
-            return std::make_pair(false, -1); // 超时空传送眩晕
+        if (sw.position == location && sw.rest &&
+            sw.type == WeaponType::TRANSMISSION && sw.player == player) return std::make_pair(false, -1); // 超时空传送眩晕
         if (std::abs(sw.position.x - x) <= 1 && std::abs(sw.position.y - y) <= 1 && sw.rest && sw.type == WeaponType::TIME_STOP)
             return std::make_pair(false, -1); // 时间暂停效果
     }
@@ -342,6 +355,8 @@ bool check_rush_param(int player, const Coord& destination, const Coord& locatio
     if (gamestate[location].generals == nullptr) return false; // 如果当前位置没有将军，返回失败
     if (gamestate[location].army < 2) return false; // 如果当前位置的军队数量小于2，返回失败
     if (gamestate[destination].generals != nullptr) return false; // 如果目标位置有将军，返回失败
+    if (gamestate[destination].type == CellType::SWAMP && gamestate.tech_level[player][static_cast<int>(TechType::IMMUNE_SWAMP)] == 0)
+        return false; // 如果目标位置是沼泽且玩家没有免疫沼泽技能，返回失败
 
     // 如果目标位置是对手玩家
     if (gamestate[destination].player == 1 - player) {
@@ -405,7 +420,8 @@ bool skill_activate(int player, const Coord& location, const Coord& destination,
 
     // 超级武器效果
     for (SuperWeapon &sw : gamestate.active_super_weapon) {
-        if (sw.position == location && sw.rest && sw.type == WeaponType::TRANSMISSION) return false; // 超时空传送眩晕
+        if (sw.position == location && sw.rest &&
+            sw.type == WeaponType::TRANSMISSION && sw.player == player) return false; // 超时空传送眩晕
         if (sw.position.in_super_weapon_range(location) && sw.rest && sw.type == WeaponType::TIME_STOP)
             return false; // 时间暂停效果
     }
@@ -564,6 +580,10 @@ bool tp(GameState &gamestate, const Coord& start, const Coord& to, int player) {
 
         // 检查目标位置是否已被占据
         if (cell_to.generals != nullptr) return false;
+
+        // 检查目标位置是否为沼泽且玩家无沼泽免疫
+        if (cell_to.type == CellType::SWAMP && gamestate.tech_level[player][static_cast<int>(TechType::IMMUNE_SWAMP)] == 0)
+            return false;
 
         int num = 0;
         if (cell_st.army == 0 || cell_st.army == 1) return false;

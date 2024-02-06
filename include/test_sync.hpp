@@ -17,26 +17,24 @@ void show_map(const GameState& state, std::ostream& f) {
     f << state.tech_level[1][0] << ", " << state.tech_level[1][1] << ", " << state.tech_level[1][2] << ", " << state.tech_level[1][3];
     f << "]]"
       << "\n";
-    for (int i = 0; i < Constant::row; ++i) {
+    for (int i = Constant::row - 1; i >= 0; --i) {
         for (int j = 0; j < Constant::col; ++j) {
-            auto element = state.board[i][j];
-            f << (int)element.type << " ";
-            f << element.player << " ";
-            f << element.army << " ";
+            const Cell& element = state.board[i][j];
+            if (element.player == 1) f << wrap("-%2d ", element.army);
+            else f << wrap(" %2d ", element.army);
         }
         f << "\n";
     }
     for (const Generals* element : state.generals) {
-        int typenow;
-        if (typeid(element) == typeid(MainGenerals)) typenow = 0;
-        else if (typeid(element) == typeid(SubGenerals)) typenow = 1;
-        else typenow = 2;
+        char typenow;
+        if (typeid(element) == typeid(MainGenerals)) typenow = 'M';
+        else if (typeid(element) == typeid(SubGenerals)) typenow = 'S';
+        else typenow = 'O';
 
-        f << element->id << " ";
-        f << typenow << " ";
-        f << element->player << " ";
-        f << element->position.x << " ";
-        f << element->position.y << "\n";
+        f << "id: " << element->id << " ";
+        f << "type: " << typenow << " ";
+        f << "player: " << element->player << " ";
+        f << "position: (" << element->position.x << ", " << element->position.y << ")\n";
     }
     f << '\n';
 }
