@@ -78,9 +78,7 @@ float compute_attack(const Cell &cell, const GameState &gamestate) {
     }
     // 考虑gamestate中的超级武器是否被激活，（可以获取到激活的位置）该位置的军队是否会被影响
     for (const SuperWeapon &weapon : gamestate.active_super_weapon) {
-        if (weapon.type == WeaponType::ATTACK_ENHANCE &&
-            cell_x - Constant::SUPER_WEAPON_RADIUS <= weapon.position.x && weapon.position.x <= cell_x + Constant::SUPER_WEAPON_RADIUS &&
-            cell_y - Constant::SUPER_WEAPON_RADIUS <= weapon.position.y && weapon.position.y <= cell_y + Constant::SUPER_WEAPON_RADIUS &&
+        if (weapon.type == WeaponType::ATTACK_ENHANCE && cell.position.in_super_weapon_range(weapon.position) &&
             weapon.player == cell.player)
         {
             attack = attack * 3;
@@ -123,9 +121,7 @@ float compute_defence(const Cell &cell, const GameState &gamestate) {
     // 考虑gamestate中的超级武器是否被激活，（可以获取到激活的位置）该位置的军队是否会被影响
     for (const SuperWeapon &weapon : gamestate.active_super_weapon) {
         if (
-            weapon.type == WeaponType::ATTACK_ENHANCE &&
-            cell_x - Constant::SUPER_WEAPON_RADIUS <= weapon.position.x && weapon.position.x <= cell_x + Constant::SUPER_WEAPON_RADIUS &&
-            cell_y - Constant::SUPER_WEAPON_RADIUS <= weapon.position.y && weapon.position.y <= cell_y + Constant::SUPER_WEAPON_RADIUS &&
+            weapon.type == WeaponType::ATTACK_ENHANCE && cell.position.in_super_weapon_range(weapon.position) &&
             weapon.player == cell.player)
         {
             defence = defence * 3;
@@ -173,7 +169,7 @@ bool army_move(const Coord& location, GameState &gamestate, int player, Directio
     for (SuperWeapon &sw : gamestate.active_super_weapon) { // 超级武器效果
         if (sw.position == location && sw.rest &&
             sw.type == WeaponType::TRANSMISSION && sw.player == player) return false; // 超时空传送眩晕
-        if (std::abs(sw.position.x - x) <= 1 && std::abs(sw.position.y - y) <= 1 && sw.rest && sw.type == WeaponType::TIME_STOP)
+        if (location.in_super_weapon_range(sw.position) && sw.rest && sw.type == WeaponType::TIME_STOP)
             return false; // 时间暂停效果
     }
 
@@ -432,7 +428,10 @@ bool skill_activate(int player, const Coord& location, const Coord& destination,
 
     if (skillType == SkillType::SURPRISE_ATTACK) {
         if (!check_rush_param(player, destination, location, gamestate)) return false; // 如果突袭技能的参数不合法，则返回false
-        general_move(location, gamestate, player, destination);
+
+        general->position = destination;
+        gamestate[destination].generals = general;
+        gamestate[location].generals = nullptr;
         army_rush(location, gamestate, player, destination);
     } else if (skillType == SkillType::ROUT) {
         if (!handle_breakthrough(destination, gamestate)) return false;
@@ -585,14 +584,10 @@ bool tp(GameState &gamestate, const Coord& start, const Coord& to, int player) {
         if (cell_to.type == CellType::SWAMP && gamestate.tech_level[player][static_cast<int>(TechType::IMMUNE_SWAMP)] == 0)
             return false;
 
-        int num = 0;
-        if (cell_st.army == 0 || cell_st.army == 1) return false;
-        else {
-            num = cell_st.army - 1;
-            cell_st.army = 1;
-        }
+        if (cell_st.army <= 1) return false;
 
-        cell_to.army = num;
+        cell_to.army = cell_st.army - 1;
+        cell_st.army = 1;
         cell_to.player = player;
         gamestate.super_weapon_cd[player] = Constant::SUPER_WEAPON_CD;
         gamestate.active_super_weapon.push_back(SuperWeapon(WeaponType::TRANSMISSION, player, 2, 2, to));

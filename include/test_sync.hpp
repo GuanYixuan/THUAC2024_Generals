@@ -19,17 +19,18 @@ void show_map(const GameState& state, std::ostream& f) {
       << "\n";
     for (int i = Constant::row - 1; i >= 0; --i) {
         for (int j = 0; j < Constant::col; ++j) {
-            const Cell& element = state.board[i][j];
+            const Cell& element = state.board[j][i];
             if (element.player == 1) f << wrap("-%2d ", element.army);
             else f << wrap(" %2d ", element.army);
         }
         f << "\n";
     }
     for (const Generals* element : state.generals) {
-        char typenow;
-        if (typeid(element) == typeid(MainGenerals)) typenow = 'M';
-        else if (typeid(element) == typeid(SubGenerals)) typenow = 'S';
-        else typenow = 'O';
+        char typenow = '?';
+        if (dynamic_cast<const MainGenerals*>(element)) typenow = 'M';
+        else if (dynamic_cast<const SubGenerals*>(element)) typenow = 'S';
+        else if (dynamic_cast<const OilWell*>(element)) typenow = 'O';
+        else assert(false);
 
         f << "id: " << element->id << " ";
         f << "type: " << typenow << " ";
