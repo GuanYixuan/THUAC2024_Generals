@@ -60,8 +60,11 @@ public:
 
     static constexpr int STRIKE_DAMAGE = 20;
 
-    static constexpr int army_movement_T1 = 80;
-    static constexpr int army_movement_T2 = 150;
+    // 玩家行动力升级相关常数
+    static constexpr int PLAYER_MOVEMENT_LEVELS = 3;
+    static constexpr int PLAYER_MOVEMENT_VALUES[PLAYER_MOVEMENT_LEVELS] = {2, 3, 5};
+    static constexpr int PLAYER_MOVEMENT_COST[PLAYER_MOVEMENT_LEVELS] = {80, 150, 1 << 30};
+
     static constexpr int swamp_immunity = 100;
     static constexpr int sand_immunity = 75;
     static constexpr int unlock_super_weapon = 250;

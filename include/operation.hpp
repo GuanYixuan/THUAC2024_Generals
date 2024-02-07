@@ -2,15 +2,33 @@
 #include "gamestate.hpp"
 #include <vector>
 
-enum class OperationType {
-    DEFAULT_OP,
-    MOVE_ARMY,
-    MOVE_GENERALS,
-    UPDATE_GENERALS,
-    USE_GENERAL_SKILLS,
-    UPDATE_TECH,
-    USE_SUPERWEAPON,
-    CALL_GENERAL
+class OperationType {
+public:
+    enum __Inner_type {
+        DEFAULT_OP,
+        MOVE_ARMY,
+        MOVE_GENERALS,
+        UPDATE_GENERALS,
+        USE_GENERAL_SKILLS,
+        UPDATE_TECH,
+        USE_SUPERWEAPON,
+        CALL_GENERAL
+    } __val;
+
+    constexpr OperationType() noexcept : __val(DEFAULT_OP) {}
+    constexpr OperationType(__Inner_type val) noexcept : __val(val) {}
+    constexpr explicit OperationType(int val) noexcept : __val(__Inner_type(val)) {}
+
+    operator __Inner_type() const noexcept { return __val; }
+    explicit operator bool() const noexcept = delete;
+
+    // 获取描述字符串
+    const char* str() const noexcept { return __str_table[__val]; }
+
+private:
+    static constexpr const char* __str_table[] = {
+        "DEFAULT_OP", "MOVE_ARMY", "MOVE_GENERALS", "UPDATE_GENERALS", "USE_GENERAL_SKILLS", "UPDATE_TECH", "USE_SUPERWEAPON", "CALL_GENERAL"
+    };
 };
 
 class Operation {
@@ -21,6 +39,14 @@ public:
     Operation() noexcept : opcode(OperationType::DEFAULT_OP) {}
     Operation(OperationType opcode, const std::vector<int>& operand) noexcept : opcode(opcode), operand(operand) {}
     Operation(OperationType opcode, std::vector<int>&& operand) noexcept : opcode(opcode), operand(std::move(operand)) {}
+
+    // 获取描述字符串
+    std::string str() const noexcept {
+        std::string result{opcode.str()};
+        result += ' ';
+        for (int param : operand) result += std::to_string(param) + ' ';
+        return result;
+    }
 
     std::string stringize() const noexcept {
         std::string result = std::to_string(int(opcode)) + " ";

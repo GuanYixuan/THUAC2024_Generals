@@ -215,25 +215,22 @@ bool army_move(const Coord& location, GameState &gamestate, int player, Directio
   * `const Coord& destination`：目标位置。
 * 返回值：如果移动合法，返回 `true`；否则返回 `false`。 */
 std::pair<bool, int> check_general_movement(const Coord& location, GameState &gamestate, int player, const Coord& destination) {
-    int x = location.x, y = location.y;
-
     if (!location.in_map() || !destination.in_map()) return std::make_pair(false, -1); // 越界
+
+    Cell& cell = gamestate[location];
     if (player != 0 && player != 1) return std::make_pair(false, -1); // 玩家非法
-    if (gamestate.board[x][y].player != player || gamestate.board[x][y].generals == nullptr)
-        return std::make_pair(false, -1); // 起始格子非法
+    if (cell.player != player || cell.generals == nullptr) return std::make_pair(false, -1); // 起始格子非法
 
     // 油井不能移动
-    OilWell *oilWellPtr = dynamic_cast<OilWell *>(gamestate.board[x][y].generals);
+    OilWell *oilWellPtr = dynamic_cast<OilWell *>(cell.generals);
     if (oilWellPtr) return std::make_pair(false, -1);
 
     for (SuperWeapon &sw : gamestate.active_super_weapon) {
         if (sw.position == location && sw.rest &&
             sw.type == WeaponType::TRANSMISSION && sw.player == player) return std::make_pair(false, -1); // 超时空传送眩晕
-        if (std::abs(sw.position.x - x) <= 1 && std::abs(sw.position.y - y) <= 1 && sw.rest && sw.type == WeaponType::TIME_STOP)
+        if (location.in_super_weapon_range(sw.position) && sw.rest && sw.type == WeaponType::TIME_STOP)
             return std::make_pair(false, -1); // 时间暂停效果
     }
-
-    int newX = destination.x, newY = destination.y;
 
     // bfs检查可移动性
     int op = -1, cl = 0;
@@ -242,14 +239,15 @@ std::pair<bool, int> check_general_movement(const Coord& location, GameState &ga
     static bool check[Constant::row][Constant::col];
     memset(check, 0, sizeof(check));
 
-    queue.emplace_back(x, y);
+    queue.emplace_back(location);
     steps.push_back(0);
-    check[x][y] = true;
+    check[location.x][location.y] = true;
 
+    int rest_move = cell.generals->rest_move;
     while (op < cl) {
         op += 1;
-        if (steps[op] > gamestate.board[x][y].generals->rest_move) break; // 步数超限
-        if (queue[op] == std::make_pair(newX, newY)) return std::make_pair(true, steps[op]); // 到达目的地
+        if (steps[op] > rest_move) break; // 步数超限
+        if (queue[op] == destination) return std::make_pair(true, steps[op]); // 到达目的地
 
         int p = queue[op].x, q = queue[op].y;
         for (const auto &direction : DIRECTION_ARR) {
@@ -258,8 +256,7 @@ std::pair<bool, int> check_general_movement(const Coord& location, GameState &ga
 
             if (!new_coord.in_map()) continue; // 越界
             if (check[newP][newQ]) continue; // 已入队
-            if (gamestate[new_coord].type == CellType::SWAMP && gamestate.tech_level[player][1] == 0)
-                continue; // 无法经过沼泽
+            if (!gamestate.can_step_on(new_coord, player)) continue; // 无法经过沼泽
             if (gamestate[new_coord].player != player || gamestate[new_coord].generals != nullptr)
                 continue; // 目的地格子非法
             queue.push_back(new_coord); // 入队
@@ -403,7 +400,7 @@ bool skill_activate(int player, const Coord& location, const Coord& destination,
     if (!location.in_map()) return false; // 如果位置坐标超出范围，则返回false
 
     // 只有前两种技能是有“目标位置”的
-    if (skillType == SkillType::SURPRISE_ATTACK || skillType == SkillType::ROUT) {
+    if (skillType == SkillType::RUSH || skillType == SkillType::ROUT) {
         if (!destination.in_map()) return false; // 如果目的地坐标超出范围，则返回false
         if (!destination.in_attack_range(location)) return false; // 如果目的地与当前位置之间的距离超过“攻击范围”，则返回false
     }
@@ -422,11 +419,11 @@ bool skill_activate(int player, const Coord& location, const Coord& destination,
             return false; // 时间暂停效果
     }
 
-    assert(skillType >= SkillType::SURPRISE_ATTACK && skillType <= SkillType::WEAKEN);
+    assert(skillType >= SkillType::RUSH && skillType <= SkillType::WEAKEN);
     if (coin < skillType.cost() || general->skills_cd[static_cast<int>(skillType)] > 0)
         return false; // 未冷却好或石油不足
 
-    if (skillType == SkillType::SURPRISE_ATTACK) {
+    if (skillType == SkillType::RUSH) {
         if (!check_rush_param(player, destination, location, gamestate)) return false; // 如果突袭技能的参数不合法，则返回false
 
         general->position = destination;
@@ -442,57 +439,6 @@ bool skill_activate(int player, const Coord& location, const Coord& destination,
     return true;
 }
 
-// 处理炸弹单元格的函数
-/* ### `bool handle_bomb_cell(GameState &gamestate, int x, int y)`
-
-* 描述：处理炸弹对单元格的影响。
-* 参数：
-  * `GameState &gamestate`：游戏状态对象的引用。
-  * `int x`：单元格的 x 坐标。
-  * `int y`：单元格的 y 坐标。
-* 返回值：如果处理成功，返回 `true`；否则返回 `false`。 */
-bool handle_bomb_cell(GameState &gamestate, int x, int y) {
-    Cell &cell = gamestate.board[x][y];
-    // 如果单元格中有主将军，将军队数量减半
-    if (dynamic_cast<MainGenerals *>(cell.generals)) cell.army = (int)(cell.army / 2);
-    else {
-        // 否则，清空单元格
-        cell.army = 0;
-        cell.player = -1;
-        cell.generals = nullptr;
-        auto it = gamestate.generals.begin();
-        // 从将军列表中移除该将军
-        while (it != gamestate.generals.end()) {
-            if ((*it)->position == Coord{x, y}) {
-                it = gamestate.generals.erase(it);
-                break;
-            }
-            it++;
-        }
-    }
-    return true;
-}
-// 处理炸弹的函数
-/* ### `bool handle_bomb(GameState &gamestate, const Coord &location)`
-
-* 描述：处理使用炸弹的操作，触发炸弹效果。
-* 参数：
-  * `GameState &gamestate`：游戏状态对象的引用。
-  * `const Coord& location`：炸弹爆炸的位置。
-* 返回值：如果处理成功，返回 `true`；否则返回 `false`。 */
-bool handle_bomb(GameState &gamestate, const Coord& location) {
-    // 遍历目标位置周围的单元格
-    for (int i = -1; i <= 1; i++) {
-        for (int j = -1; j <= 1; j++) {
-            int x = location.x + i;
-            int y = location.y + j;
-            // 如果单元格在棋盘内，处理该单元格
-            if (x >= 0 && x < Constant::row && y >= 0 && y < Constant::col) handle_bomb_cell(gamestate, x, y);
-        }
-    }
-    return true;
-}
-
 // 使用炸弹的函数
 /* ### `bool bomb(GameState &gamestate, const Coord& location, int player)`
 
@@ -505,8 +451,7 @@ bool handle_bomb(GameState &gamestate, const Coord& location) {
 bool bomb(GameState &gamestate, const Coord& location, int player) {
     // 检查玩家和位置的有效性
     if (player != 0 && player != 1) return false;
-    if (location.x < 0 || location.x > Constant::row) return false;
-    if (location.y < 0 || location.y > Constant::col) return false;
+    if (!location.in_map()) return false;
 
     // 检查超级武器是否解锁并且冷却时间为0
     bool is_super_weapon_unlocked = gamestate.super_weapon_unlocked[player];
@@ -516,8 +461,35 @@ bool bomb(GameState &gamestate, const Coord& location, int player) {
         gamestate.active_super_weapon.push_back(SuperWeapon(WeaponType::NUCLEAR_BOOM, player, 0, 5, location));
         // 设置超级武器的冷却时间
         gamestate.super_weapon_cd[player] = Constant::SUPER_WEAPON_CD;
-        // 处理炸弹
-        handle_bomb(gamestate, location);
+
+        // 处理炸弹效果
+        // 遍历目标位置周围的单元格
+        for (int i = -1; i <= 1; i++) {
+            for (int j = -1; j <= 1; j++) {
+                // 如果单元格在棋盘内，处理该单元格
+                Coord coord{location.x + i, location.y + j};
+                if (!coord.in_map())  continue;
+
+                Cell &cell = gamestate[coord];
+                // 如果单元格中有主将，军队数量减半
+                if (dynamic_cast<MainGenerals *>(cell.generals)) cell.army = (int)(cell.army / 2);
+                else { // 否则，清空单元格
+                    cell.army = 0;
+                    cell.player = -1;
+                    cell.generals = nullptr;
+
+                    auto it = gamestate.generals.begin();
+                    // 从将军列表中移除该将军
+                    while (it != gamestate.generals.end()) {
+                        if ((*it)->position == coord) {
+                            it = gamestate.generals.erase(it);
+                            break;
+                        }
+                        it++;
+                    }
+                }
+            }
+        }
         return true;
     }
     return false;
@@ -670,8 +642,7 @@ bool movement_up(const Coord& location, GameState &gamestate, int player) {
     return cell.generals->movement_up(gamestate, player);
 }
 
-/* ### `bool tech_update(int tech_type, GameState &gamestate, int player)`
-
+/*
 * 描述：科技升级。
 * 参数：
   * `int tech_type`：升级的科技类型。
@@ -679,23 +650,24 @@ bool movement_up(const Coord& location, GameState &gamestate, int player) {
   * `int player`：执行操作的玩家编号。
 * 返回值：如果技术升级成功，返回 `true`；否则返回 `false`。
  */
-bool tech_update(int tech_type, GameState &gamestate, int player) {
-    switch (tech_type) {
-        case 0:
-            if (gamestate.tech_level[player][0] == 2) {
-                if (gamestate.coin[player] < Constant::army_movement_T1) return false;
-                gamestate.tech_level[player][0] = 3;
-                gamestate.coin[player] -= Constant::army_movement_T1;
-                return true;
-            } else if (gamestate.tech_level[player][0] == 3) {
-                if (gamestate.coin[player] < Constant::army_movement_T2) return false;
-                gamestate.tech_level[player][0] = 5;
-                gamestate.coin[player] -= Constant::army_movement_T2;
-                return true;
+bool tech_update(TechType tech_type, GameState &gamestate, int player) {
+    if (tech_type == TechType::MOBILITY) {
+        for (int i = 0; i < Constant::PLAYER_MOVEMENT_LEVELS; ++i) {
+                if (gamestate.tech_level[player][static_cast<int>(tech_type)] == Constant::PLAYER_MOVEMENT_VALUES[i]) {
+                    if (gamestate.coin[player] < Constant::PLAYER_MOVEMENT_COST[i]) return false;
+
+                    gamestate.coin[player] -= Constant::PLAYER_MOVEMENT_COST[i];
+                    gamestate.rest_move_step[player] = Constant::PLAYER_MOVEMENT_VALUES[i + 1]; // 【立即恢复移动步数（未说明的feature）】
+                    gamestate.tech_level[player][static_cast<int>(tech_type)] = Constant::PLAYER_MOVEMENT_VALUES[i + 1];
+                    return true;
+                }
             }
-            return false;
-            break;
-        case 1:
+        return false;
+    }
+
+    if (gamestate.tech_level[player][static_cast<int>(tech_type)] != 0) return false;
+    switch (tech_type) {
+        case TechType::IMMUNE_SWAMP:
             if (gamestate.tech_level[player][1] == 0) {
                 if (gamestate.coin[player] < Constant::swamp_immunity) return false;
                 gamestate.tech_level[player][1] = 1;
@@ -704,7 +676,7 @@ bool tech_update(int tech_type, GameState &gamestate, int player) {
             }
             return false;
             break;
-        case 2:
+        case TechType::IMMUNE_SAND:
             if (gamestate.tech_level[player][2] == 0) {
                 if (gamestate.coin[player] < Constant::sand_immunity) return false;
                 gamestate.tech_level[player][2] = 1;
@@ -713,7 +685,7 @@ bool tech_update(int tech_type, GameState &gamestate, int player) {
             }
             return false;
             break;
-        case 3:
+        case TechType::UNLOCK:
             if (gamestate.tech_level[player][3] == 0) {
                 if (gamestate.coin[player] < Constant::unlock_super_weapon) return false;
                 gamestate.tech_level[player][3] = 1;
@@ -724,6 +696,8 @@ bool tech_update(int tech_type, GameState &gamestate, int player) {
             }
             return false;
             break;
+        default:
+            assert(false);
     }
     return false;
 }

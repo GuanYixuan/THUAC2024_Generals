@@ -50,7 +50,7 @@ public:
 class SkillType {
 public:
     enum __Inner_type : int8_t {
-        SURPRISE_ATTACK = 0,
+        RUSH = 0,
         ROUT = 1,
         COMMAND = 2,
         DEFENCE = 3,
@@ -78,7 +78,7 @@ public:
     constexpr const char* str() const noexcept { return __str[static_cast<int>(__val)]; }
 
 private:
-    constexpr static const char* __str[5] = {"SURPRISE_ATTACK", "ROUT", "COMMAND", "DEFENCE", "WEAKEN"};
+    constexpr static const char* __str[5] = {"RUSH", "ROUT", "COMMAND", "DEFENCE", "WEAKEN"};
 };
 
 // 将军属性类型
@@ -122,7 +122,7 @@ constexpr Coord DIRECTION_ARR[4] = {Coord(-1, 0), Coord(1, 0), Coord(0, -1), Coo
 
 // 将军技能结构体
 struct Skill {
-    SkillType type = SkillType::SURPRISE_ATTACK; // 技能类型
+    SkillType type = SkillType::RUSH; // 技能类型
     int cd = 0; //冷却回合数
 };
 
@@ -257,8 +257,8 @@ public:
 
     int next_generals_id;
 
-    // 游戏棋盘的二维列表，每个元素是一个Cell对象
-    Cell board[Constant::row][Constant::col];
+    // 游戏棋盘的二维列表，每个元素是一个Cell对象，下标为[x][y]
+    Cell board[Constant::col][Constant::row];
 
     GameState() noexcept :
         round(1), coin{0, 0},
@@ -276,10 +276,16 @@ public:
         return board[pos.x][pos.y];
     }
 
-    // 寻找将军id对应的格子，找不到返回(-1,-1)
+    // 寻找将军id对应的格子，找不到返回`(-1,-1)`
     Coord find_general_position_by_id(int general_id) const noexcept {
         for (const Generals* gen : generals) if (gen->id == general_id) return gen->position;
         return Coord(-1, -1);
+    }
+    // 考虑沼泽科技，指定玩家的军队是否可以移动到指定位置
+    bool can_step_on(const Coord& pos, int player) const noexcept {
+        assert(pos.in_map());
+        const Cell& cell = board[pos.x][pos.y];
+        return cell.type != CellType::SWAMP || tech_level[player][static_cast<int>(TechType::IMMUNE_SWAMP)] > 0;
     }
     // 更新游戏回合信息
     void update_round();
@@ -382,6 +388,7 @@ bool MainGenerals::movement_up(GameState &gamestate, int player) {
 
             gamestate.coin[player] -= cost;
             mobility_level = Constant::GENERAL_MOVEMENT_VALUES[i + 1];
+            rest_move = mobility_level; // 【立即恢复移动步数（未说明的feature）】
             return true;
         }
     }
@@ -419,6 +426,7 @@ bool SubGenerals::movement_up(GameState &gamestate, int player) {
 
             gamestate.coin[player] -= Constant::GENERAL_MOVEMENT_COST[i];
             mobility_level = Constant::GENERAL_MOVEMENT_VALUES[i + 1];
+            rest_move = mobility_level; // 【立即恢复移动步数（未说明的feature）】
             return true;
         }
     }

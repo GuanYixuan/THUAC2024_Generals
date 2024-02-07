@@ -40,7 +40,12 @@ public:
      * @note 此方法断言所有敌方操作合法
      */
     void apply_enemy_ops(const std::vector<Operation> &ops) {
-        for (const auto &op : ops) assert(execute_single_command(1 - my_seat, op));
+        for (const auto &op : ops) {
+            bool result = execute_single_command(1 - my_seat, op);
+
+            if (!result) std::cerr << "Invalid enemy operation: " << op.str() << std::endl;
+            assert(result);
+        }
     }
     /**
      * @brief 从`stdin`读取并应用敌方操作
@@ -109,7 +114,7 @@ bool GameController::execute_single_command(int player, const Operation &op)
         }
         // 更新科技
         case OperationType::UPDATE_TECH:
-            return tech_update(params[0] - 1, game_state, player);
+            return tech_update(static_cast<TechType>(params[0] - 1), game_state, player);
         // 使用超级武器
         case OperationType::USE_SUPERWEAPON:
             switch (params[0]) {
