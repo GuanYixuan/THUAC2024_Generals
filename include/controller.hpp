@@ -34,28 +34,23 @@ public:
 
     void init();
     bool execute_single_command(int player, const Operation &op);
-    std::vector<Operation> read_enemy_ops();
     /**
      * @brief 为敌方应用动作序列`ops`
      * @note 此方法断言所有敌方操作合法
      */
     void apply_enemy_ops(const std::vector<Operation> &ops) {
         for (const auto &op : ops) {
-            bool result = execute_single_command(1 - my_seat, op);
+            bool valid = execute_single_command(1 - my_seat, op);
 
-            if (!result) std::cerr << "Invalid enemy operation: " << op.str() << std::endl;
-            assert(result);
+            if (!valid) throw std::runtime_error("Invalid enemy operation: " + op.str());
         }
     }
     /**
      * @brief 从`stdin`读取并应用敌方操作
      * @note 此方法断言所有敌方操作合法
      */
-    void read_and_apply_enemy_ops() { apply_enemy_ops(read_enemy_ops()); }
-    bool try_apply_our_op(const Operation &op);
-    bool try_apply_our_ops(const std::vector<Operation> &ops);
+    void read_and_apply_enemy_ops() { apply_enemy_ops(read_enemy_operations()); }
     void finish_and_send_our_ops();
-    void update_round_info();
 };
 
 /* #### `bool execute_single_command(int player, const Operation &op)`
@@ -154,60 +149,18 @@ void GameController::init()
     std::tie(my_seat, game_state) = read_init_map();
 }
 
-/* #### `std::vector<Operation> read_enemy_ops()`
-
-* 描述：读取敌方操作列表。
-* 参数：无。
-* 返回值：包含敌方操作的操作列表，类型为 `std::vector<Operation>`。 */
-std::vector<Operation> GameController::read_enemy_ops()
-{
-    // 读取敌方操作列表。
-    return read_enemy_operations();
-}
-
-/* #### `bool try_apply_our_op(const Operation &op)`
-
-* 描述：尝试执行我方单个操作。
-* 参数：
-  * `const Operation &op`：待尝试执行的我方单个操作。
-* 返回值：如果操作合法且成功执行，则返回 true，否则返回 false。 */
-bool GameController::try_apply_our_op(const Operation &op)
-{
-    // 尝试执行我方操作。如果返回false说明我方操作不合法。
-    if (execute_single_command(my_seat, op))
-    {
-        my_operation_list.push_back(op);
-        return true;
-    }
-    return false;
-}
-
-/* #### `bool try_apply_our_ops(const std::vector<Operation> &ops)`
-
-* 描述：尝试执行我方若干操作。
-* 参数：
-  * `const std::vector<Operation> &ops`：待尝试执行的我方操作列表。
-* 返回值：如果所有我方操作合法且成功执行，则返回 true，否则返回 false。 */
-bool GameController::try_apply_our_ops(const std::vector<Operation> &ops)
-{
-    // 尝试执行我方若干操作。如果返回false说明我方操作不合法，并停止执行后面的操作。
-    for (const auto &op : ops)
-    {
-        if (!try_apply_our_op(op))
-        {
-            return false;
-        }
-    }
-    return true;
-}
-
 /* #### `void finish_and_send_our_ops()`
 
 * 描述：结束我方操作回合，将操作列表打包发送并清空。
 * 参数：无。
 * 返回值：无。 */
-void GameController::finish_and_send_our_ops()
-{
+void GameController::finish_and_send_our_ops() {
+    // 应用我方操作
+    for (const Operation &op : my_operation_list) {
+        bool valid = execute_single_command(my_seat, op);
+        if (!valid) throw std::runtime_error("Sending invalid operation: " + op.str());
+    }
+
     // 结束我方操作回合，将操作列表打包发送并清空。
     std::string msg = "";
     for (const auto &op : my_operation_list)
@@ -217,15 +170,4 @@ void GameController::finish_and_send_our_ops()
     msg += "8\n";
     write_to_judger(msg);
     my_operation_list.clear();
-}
-
-/* #### `void update_round_info()`
-
-* 描述：更新游戏回合信息。
-* 参数：无。
-* 返回值：无。
- */
-void GameController::update_round_info()
-{
-    game_state.update_round();
 }
