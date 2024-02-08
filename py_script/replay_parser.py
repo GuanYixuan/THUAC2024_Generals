@@ -309,6 +309,7 @@ class Replay_parser:
             general_id = raw_params[0]
             general_info = next((gen for gen in data["Generals"] if gen["Id"] == general_id), None)
             assert general_info is not None
+
             general_type = GENERAL_TYPES[general_info["Type"]]
             description = f"Move {general_type} to ({raw_params[1]}, {raw_params[2]})"
 
@@ -317,13 +318,22 @@ class Replay_parser:
             general_id = raw_params[0]
             general_info = next((gen for gen in data["Generals"] if gen["Id"] == general_id), None)
             assert general_info is not None
+
             general_type = GENERAL_TYPES[general_info["Type"]]
             upgrade_type = UPGRADE_TYPES[raw_params[1]]
             upgrade_level = general_info["Level"][raw_params[1]-1]
             description = f"Upgrade {general_type}({general_info['Position'][0]}, {general_info['Position'][1]}): {upgrade_type}{upgrade_level}"
         elif action_code == 4:  # Use Skill
-            skill_name = SKILL_NAMES[raw_params[1]]
-            description = f"{skill_name} ({raw_params[2]}, {raw_params[3]})"
+            general_id = raw_params[0]
+            general_info = next((gen for gen in data["Generals"] if gen["Id"] == general_id), None)
+            assert general_info is not None
+
+            skill_type = raw_params[1]
+            skill_name = SKILL_NAMES[skill_type]
+            if skill_type == 1 or skill_type == 2:
+                description = f"{skill_name} ({raw_params[2]}, {raw_params[3]})"
+            else:
+                description = f"{skill_name} ({general_info['Position'][0]}, {general_info['Position'][1]})"
         elif action_code == 5:  # Upgrade Tech
             tech_name = TECH_NAMES[raw_params[0]]
             level = data["Tech_level"][player][raw_params[0]-1]

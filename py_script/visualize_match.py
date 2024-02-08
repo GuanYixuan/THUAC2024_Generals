@@ -241,6 +241,7 @@ class Match_visualizer:
 
     def dataframe_to_image(self, df: pd.DataFrame, origin: Point2d, round_number: int, action_index: int) -> None:
         """将一个DataFrame作为表格绘制到图像中"""
+        if not df.shape[0]: return  # 空表格不绘制
 
         df = df[["round", "action_index", "description", "remain_coins"]].copy()
 
