@@ -1,10 +1,13 @@
 #pragma once
-#include "operation.hpp"
+
 #include <vector>
+#include <iostream>
+
+#include "operation.hpp"
 #include "gamestate.hpp"
 #include "protocol.hpp"
-#include <iostream>
 #include "util.hpp"
+#include "logger.hpp"
 /* ## `class GameController`
 
 游戏控制器。可以帮助选手处理游戏流程有关的繁琐操作。
@@ -41,6 +44,7 @@ public:
     void apply_enemy_ops(const std::vector<Operation> &ops) {
         for (const auto &op : ops) {
             bool valid = execute_single_command(1 - my_seat, op);
+            logger.log(LOG_LEVEL_INFO, "Enemy op: %s", op.str().c_str());
 
             if (!valid) throw std::runtime_error("Invalid enemy operation: " + op.str());
         }
@@ -50,6 +54,7 @@ public:
      * @note 此方法断言所有敌方操作合法
      */
     void read_and_apply_enemy_ops() { apply_enemy_ops(read_enemy_operations()); }
+    // 结束我方操作回合，将操作列表打包发送并清空
     void finish_and_send_our_ops();
 };
 
@@ -149,15 +154,11 @@ void GameController::init()
     std::tie(my_seat, game_state) = read_init_map();
 }
 
-/* #### `void finish_and_send_our_ops()`
-
-* 描述：结束我方操作回合，将操作列表打包发送并清空。
-* 参数：无。
-* 返回值：无。 */
 void GameController::finish_and_send_our_ops() {
     // 应用我方操作
     for (const Operation &op : my_operation_list) {
         bool valid = execute_single_command(my_seat, op);
+        logger.log(LOG_LEVEL_INFO, "Our op: %s", op.str());
         if (!valid) throw std::runtime_error("Sending invalid operation: " + op.str());
     }
 

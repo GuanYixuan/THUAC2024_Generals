@@ -17,6 +17,11 @@
 #define LOG_SWITCH true
 #define LOG_STDOUT false
 
+constexpr int LOG_LEVEL_DEBUG = 0;
+constexpr int LOG_LEVEL_INFO = 1;
+constexpr int LOG_LEVEL_WARN = 2;
+constexpr int LOG_LEVEL_ERROR = 3;
+
 class Logger {
 	public:
 		Logger(int _log_level) noexcept;
@@ -45,7 +50,7 @@ class Logger {
 Logger::Logger(int _log_level) noexcept : log_level(_log_level), round(0) {
 	if (LOG_SWITCH) {
 		if (LOG_STDOUT) file = stdout;
-		else file = fopen("log.log", "a");
+		else file = stderr;
 	}
 }
 void Logger::log(int level, const char* format, ...) noexcept {

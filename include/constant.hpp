@@ -1,5 +1,21 @@
 #pragma once
 
+#include <cstdio>
+#include <string>
+#include <cstdarg>
+
+// 输出至`std::string`版本的`printf`
+[[nodiscard]] std::string wrap(const char *format, ...) {
+    static char buffer[1024];
+
+    va_list args;
+    va_start(args, format);
+    vsprintf(buffer, format, args);
+    va_end(args);
+
+    return std::string(buffer);
+}
+
 class Constant {
 public:
     // 玩家数量

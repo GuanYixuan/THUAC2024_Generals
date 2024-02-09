@@ -1,21 +1,9 @@
 #pragma once
 #include <vector>
-#include <cstdarg>
 #include <cassert>
 #include <cmath>
 #include "gamestate.hpp"
 
-// 输出至`std::string`版本的`printf`
-[[nodiscard]] std::string wrap(const char *format, ...) {
-    static char buffer[1024];
-
-    va_list args;
-    va_start(args, format);
-    vsprintf(buffer, format, args);
-    va_end(args);
-
-    return std::string(buffer);
-}
 
 /* ### `bool call_generals(GameState &gamestate, int player, const Coord& location)`
 
