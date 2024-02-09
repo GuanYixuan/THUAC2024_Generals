@@ -26,6 +26,9 @@ public:
     Coord operator+(const Coord& other) const noexcept { return Coord(x + other.x, y + other.y); }
     Coord operator-(const Coord& other) const noexcept { return Coord(x - other.x, y - other.y); }
 
+    // 获取描述字符串
+    std::string str() const noexcept { return wrap("(%2d, %2d)", x, y); }
+
     // 判断此坐标是否在地图范围内
     constexpr bool in_map() const noexcept {
         return 0 <= x && x < Constant::row && 0 <= y && y < Constant::col;
@@ -99,7 +102,7 @@ enum class WeaponType {
 // 格子类型
 enum class CellType {
     PLAIN = 0,
-    SAND = 1,
+    DESERT = 1,
     SWAMP = 2
 };
 
@@ -288,10 +291,10 @@ public:
         return cell.type != CellType::SWAMP || tech_level[player][static_cast<int>(TechType::IMMUNE_SWAMP)] > 0;
     }
     // 更新游戏回合信息
-    void update_round();
+    void update_round() noexcept;
 };
 
-void GameState::update_round() {
+void GameState::update_round() noexcept {
     for (int i = 0; i < Constant::row; ++i) {
         for (int j = 0; j < Constant::col; ++j) {
             Cell& cell = this->board[i][j];
@@ -304,7 +307,7 @@ void GameState::update_round() {
             else if (dynamic_cast<OilWell*>(general) && general->is_occupied()) coin[general->player] += general->produce_level;
 
             // 流沙减兵
-            if (cell.type == CellType::SAND && cell.player != -1 && cell.army > 0) {
+            if (cell.type == CellType::DESERT && cell.player != -1 && cell.army > 0) {
                 if (this->tech_level[cell.player][static_cast<int>(TechType::IMMUNE_SAND)] == 0) {
                     cell.army -= 1;
                     if (cell.army == 0 && cell.generals == nullptr) cell.player = -1;
