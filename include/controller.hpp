@@ -158,7 +158,7 @@ void GameController::finish_and_send_our_ops() {
     // 应用我方操作
     for (const Operation &op : my_operation_list) {
         bool valid = execute_single_command(my_seat, op);
-        logger.log(LOG_LEVEL_INFO, "Our op: %s", op.str());
+        logger.log(LOG_LEVEL_INFO, "Our op: %s", op.str().c_str());
         if (!valid) throw std::runtime_error("Sending invalid operation: " + op.str());
     }
 

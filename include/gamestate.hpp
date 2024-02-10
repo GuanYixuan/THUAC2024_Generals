@@ -103,7 +103,8 @@ enum class WeaponType {
 enum class CellType {
     PLAIN = 0,
     DESERT = 1,
-    SWAMP = 2
+    SWAMP = 2,
+    Type_count = 3
 };
 
 // 科技类型
@@ -116,10 +117,10 @@ enum class TechType {
 
 // 方向类型
 enum Direction {
-    UP = 0,
-    DOWN = 1,
-    LEFT = 2,
-    RIGHT = 3
+    LEFT = 0,
+    RIGHT = 1,
+    DOWN = 2,
+    UP = 3
 };
 constexpr Coord DIRECTION_ARR[4] = {Coord(-1, 0), Coord(1, 0), Coord(0, -1), Coord(0, 1)}; // 方向数组
 

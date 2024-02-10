@@ -144,15 +144,13 @@ Coord calculate_new_pos(const Coord& location, Direction direction) {
   * `int num`：移动的兵力数量。
 * 返回值：如果移动成功，返回 `true`；否则返回 `false`。 */
 bool army_move(const Coord& location, GameState &gamestate, int player, Direction direction, int num) {
-    int x = location.x, y = location.y;
-    if (!location.in_map()) return false; // 越界
-    if (player != 0 && player != 1) return false; // 玩家参数非法
-    if (gamestate.board[x][y].player != player) return false; // 操作格子非法
-    if (gamestate.rest_move_step[player] == 0) return false;
-    if (gamestate.board[x][y].army <= 1) return false;
+    assert(location.in_map() && (player == 0 || player == 1));
+    assert(num > 0);
+    Cell& cell = gamestate[location];
 
-    if (num <= 0) return false; // 移动数目非法
-    if (num > gamestate.board[x][y].army - 1) return false;
+    if (cell.player != player) return false; // 操作格子非法
+    if (gamestate.rest_move_step[player] == 0) return false;
+    if (num > cell.army - 1) return false;
 
     for (SuperWeapon &sw : gamestate.active_super_weapon) { // 超级武器效果
         if (sw.position == location && sw.rest &&
@@ -170,23 +168,23 @@ bool army_move(const Coord& location, GameState &gamestate, int player, Directio
 
     if (new_cell.player == player) { // 目的地格子己方所有
         new_cell.army += num;
-        gamestate.board[x][y].army -= num;
+        cell.army -= num;
     } else if (new_cell.player == 1 - player || new_cell.player == -1) { // 攻击敌方或无主格子
-        float attack = compute_attack(gamestate.board[x][y], gamestate);
+        float attack = compute_attack(cell, gamestate);
         float defence = compute_defence(new_cell, gamestate);
         float vs = num * attack - new_cell.army * defence;
         if (vs > 0) { // 攻下
             new_cell.player = player;
             new_cell.army = (int)(std::ceil(vs / attack));
-            gamestate.board[x][y].army -= num;
+            cell.army -= num;
             if (new_cell.generals != nullptr) new_cell.generals->player = player; // 将军易主
         } else if (vs < 0) { // 防住
             new_cell.army = (int)(std::ceil((-vs) / defence));
-            gamestate.board[x][y].army -= num;
+            cell.army -= num;
         } else if (vs == 0) { // 中立
             if (new_cell.generals == nullptr) new_cell.player = -1;
             new_cell.army = 0;
-            gamestate.board[x][y].army -= num;
+            cell.army -= num;
         }
     }
     gamestate.rest_move_step[player] -= 1;

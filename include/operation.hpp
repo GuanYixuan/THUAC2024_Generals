@@ -64,7 +64,7 @@ public:
         return Operation(OperationType::MOVE_GENERALS, {generals_id, position.x, position.y});
     }
     // 便捷构造：升级将军属性
-    static Operation update_generals(int generals_id, QualityType type) noexcept {
+    static Operation upgrade_generals(int generals_id, QualityType type) noexcept {
         return Operation(OperationType::UPDATE_GENERALS, {generals_id, static_cast<int>(type) + 1});
     }
     // 便捷构造：使用将军技能
@@ -72,7 +72,7 @@ public:
         return Operation(OperationType::USE_GENERAL_SKILLS, {generals_id, static_cast<int>(type) + 1, position.x, position.y});
     }
     // 便捷构造：升级科技
-    static Operation update_tech(TechType type) noexcept {
+    static Operation upgrade_tech(TechType type) noexcept {
         return Operation(OperationType::UPDATE_TECH, {static_cast<int>(type) + 1});
     }
     // 便捷构造：使用超级武器
@@ -80,7 +80,7 @@ public:
         return Operation(OperationType::USE_SUPERWEAPON, {static_cast<int>(type) + 1, destination.x, destination.y, origin.x, origin.y});
     }
     // 便捷构造：召唤副将
-    static Operation call_generals(const Coord& position) noexcept {
+    static Operation recruit_generals(const Coord& position) noexcept {
         return Operation(OperationType::CALL_GENERAL, {position.x, position.y});
     }
 };
