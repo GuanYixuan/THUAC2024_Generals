@@ -8,6 +8,12 @@
 #include "protocol.hpp"
 #include "util.hpp"
 #include "logger.hpp"
+
+
+// 标识玩家的先后手：0先手，1后手
+int my_seat = 0;
+
+
 /* ## `class GameController`
 
 游戏控制器。可以帮助选手处理游戏流程有关的繁琐操作。
@@ -31,7 +37,6 @@
 class GameController
 {
 public:
-    int my_seat = 0;                          // 您的位置。0代表您是先手，1代表您是后手。
     GameState game_state;                     // 游戏状态，一个 GameState 类的对象。
     std::vector<Operation> my_operation_list; // 我方未发送的操作列表。
 
