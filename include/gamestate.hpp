@@ -122,7 +122,17 @@ enum Direction {
     DOWN = 2,
     UP = 3
 };
-constexpr Coord DIRECTION_ARR[4] = {Coord(-1, 0), Coord(1, 0), Coord(0, -1), Coord(0, 1)}; // 方向数组
+constexpr int DIRECTION_COUNT = 4;
+constexpr Coord DIRECTION_ARR[DIRECTION_COUNT] = {Coord(-1, 0), Coord(1, 0), Coord(0, -1), Coord(0, 1)}; // 方向数组
+Direction from_coord(const Coord& from, const Coord& to) noexcept {
+    assert(to.dist_to(from) == 1);
+    if (from.x < to.x) return RIGHT;
+    if (from.x > to.x) return LEFT;
+    if (from.y < to.y) return DOWN;
+    if (from.y > to.y) return UP;
+    assert(!"from == to");
+    return LEFT;
+}
 
 // 将军技能结构体
 struct Skill {
@@ -280,17 +290,33 @@ public:
         return board[pos.x][pos.y];
     }
 
+    // 返回某格上某玩家的有效士兵数，负数表示敌军
+    int eff_army(const Coord& pos, int player) const noexcept {
+        assert(pos.in_map());
+        const Cell& cell = board[pos.x][pos.y];
+        if (cell.player == player) return cell.army;
+        return -cell.army;
+    }
+
     // 寻找将军id对应的格子，找不到返回`(-1,-1)`
     Coord find_general_position_by_id(int general_id) const noexcept {
         for (const Generals* gen : generals) if (gen->id == general_id) return gen->position;
         return Coord(-1, -1);
     }
-    // 考虑沼泽科技，指定玩家的军队是否可以移动到指定位置
-    bool can_step_on(const Coord& pos, int player) const noexcept {
+    // 考虑沼泽科技，指定玩家的【军队】是否可以移动到指定位置
+    bool can_soldier_step_on(const Coord& pos, int player) const noexcept {
         assert(pos.in_map());
         const Cell& cell = board[pos.x][pos.y];
         return cell.type != CellType::SWAMP || tech_level[player][static_cast<int>(TechType::IMMUNE_SWAMP)] > 0;
     }
+    // 考虑沼泽科技，指定玩家的【将领】是否可以移动到指定位置
+    bool can_general_step_on(const Coord& pos, int player) const noexcept {
+        assert(pos.in_map());
+        const Cell& cell = board[pos.x][pos.y];
+        if (cell.generals != nullptr) return false;
+        return cell.type != CellType::SWAMP || tech_level[player][static_cast<int>(TechType::IMMUNE_SWAMP)] > 0;
+    }
+
     // 更新游戏回合信息
     void update_round() noexcept;
 };

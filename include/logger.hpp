@@ -12,6 +12,7 @@
 #include <cstdarg>
 #include <cstdio>
 #include <string>
+#include <chrono>
 
 #define RELEASE false
 #define LOG_SWITCH true
@@ -51,6 +52,11 @@ Logger::Logger(int _log_level) noexcept : log_level(_log_level), round(0) {
 	if (LOG_SWITCH) {
 		if (LOG_STDOUT) file = stdout;
 		else file = stderr;
+
+        // 输出当前时间
+        auto timet = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+        std::string time_str = std::string(std::ctime(&timet)) + "\n";
+        log(LOG_LEVEL_INFO, "Match starts at %s", time_str.c_str());
 	}
 }
 void Logger::log(int level, const char* format, ...) noexcept {

@@ -242,7 +242,7 @@ std::pair<bool, int> check_general_movement(const Coord& location, GameState &ga
 
             if (!new_coord.in_map()) continue; // 越界
             if (check[newP][newQ]) continue; // 已入队
-            if (!gamestate.can_step_on(new_coord, player)) continue; // 无法经过沼泽
+            if (!gamestate.can_general_step_on(new_coord, player)) continue; // 无法经过沼泽
             if (gamestate[new_coord].player != player || gamestate[new_coord].generals != nullptr)
                 continue; // 目的地格子非法
             queue.push_back(new_coord); // 入队

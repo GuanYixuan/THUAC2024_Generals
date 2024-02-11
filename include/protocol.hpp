@@ -19,7 +19,7 @@ std::tuple<int, GameState> read_init_map() {
     auto map = d["Cells"], generals = d["Generals"], coins = d["Coins"];
     std::string types = d["Cell_type"].dump();
     gamestate.coin[0] = coins[0], gamestate.coin[1] = coins[1];
-    for (int i = 0; i < map.size(); ++i) {
+    for (int i = 0, siz = map.size(); i < siz; ++i) {
         int x = int(map[i][0][0]);
         int y = int(map[i][0][1]);
         Cell& cell = gamestate.board[x][y];
@@ -29,7 +29,7 @@ std::tuple<int, GameState> read_init_map() {
         cell.army = int(map[i][2]);
         cell.position = Coord(x, y);
     }
-    for (int i = 0; i < generals.size(); ++i) {
+    for (int i = 0, siz = generals.size(); i < siz; ++i) {
         int id = int(generals[i]["Id"]);
         int player = int(generals[i]["Player"]);
         gamestate.next_generals_id++;

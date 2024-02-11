@@ -6,8 +6,9 @@
 #include <iostream>
 
 #include "gamestate.hpp"
+#include "controller.hpp"
 
-
+// 寻路配置
 struct Path_find_config {
     // 沙漠格子的相对距离
     double desert_dist;
@@ -23,6 +24,7 @@ struct Path_find_config {
 
 };
 
+// 寻路算法类
 class Dist_map {
 public:
     static constexpr double MAX_DIST = 1000 * Constant::col * Constant::row;
@@ -46,6 +48,9 @@ public:
     // 计算从`pos`走向`origin`的下一步最佳方向，返回的是`DIRECTION_ARR`中的下标
     Direction direction_to_origin(const Coord& pos) const noexcept;
 
+    // 计算`pos`到某个将领坐标`general_pos`的有效距离，以0为恰好安全
+    static int effect_dist(const Coord& pos, const Coord& general_pos, bool can_rush) noexcept;
+
     // 构造函数，暂且把计算也写在这里
     Dist_map(const GameState& board, const Coord& origin, const Path_find_config& cfg) noexcept;
 private:
@@ -59,6 +64,18 @@ private:
         bool operator> (const __Queue_Node& other) const noexcept { return dist > other.dist; }
     };
 };
+
+// “投送兵力数”计算
+class Projection_assess {
+public:
+    Projection_assess(const GameState& state) noexcept : state(state) {}
+
+private:
+    const GameState& state;
+};
+
+
+// ******************** 寻路部分实现 ********************
 
 Dist_map::Dist_map(const GameState& board, const Coord& origin, const Path_find_config& cfg) noexcept : origin(origin), cfg(cfg), board(board) {
     // 初始化
@@ -103,11 +120,25 @@ Direction Dist_map::direction_to_origin(const Coord& pos) const noexcept {
         if (!next_pos.in_map()) continue;
         if (cfg.general_path && next_pos != origin && board[next_pos].generals != nullptr) continue;
 
-        if (dist[next_pos.x][next_pos.y] < min_dist) {
-            min_dist = dist[next_pos.x][next_pos.y];
+        double next_dist = dist[next_pos.x][next_pos.y] + board[next_pos].army * 0.01 * ((board[next_pos].player != my_seat) ? 1 : -1);
+        if (next_dist < min_dist) {
+            min_dist = next_dist;
             min_dir = i;
         }
     }
     assert(min_dist <= Constant::col * Constant::row);
     return static_cast<Direction>(min_dir);
+}
+
+int Dist_map::effect_dist(const Coord& pos, const Coord& general_pos, bool can_rush) noexcept {
+    assert(pos.in_map() && general_pos.in_map());
+
+    // 若不考虑技能，则默认行动力为2格
+    if (!can_rush) return pos.dist_to(general_pos) - Constant::PLAYER_MOVEMENT_VALUES[0] - 1;
+
+    // 考虑技能
+    int dx = std::max(std::abs(pos.x - general_pos.x) - Constant::GENERAL_ATTACK_RADIUS, 0);
+    int dy = std::max(std::abs(pos.y - general_pos.y) - Constant::GENERAL_ATTACK_RADIUS, 0);
+    if (dx == 0 && dy == 0) return std::min(std::abs(pos.x - general_pos.x), std::abs(pos.y - general_pos.y)) - Constant::PLAYER_MOVEMENT_VALUES[0] - 3;
+    return dx + dy - Constant::PLAYER_MOVEMENT_VALUES[0] - 1;
 }
