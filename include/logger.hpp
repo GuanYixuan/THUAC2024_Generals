@@ -59,7 +59,7 @@ void Logger::log(int level, const char* format, ...) noexcept {
 		va_start(args, format);
 		vsprintf(buffer, format, args);
 		va_end(args);
-		fprintf(file, "round%03d: %s\n", round, buffer);
+		fprintf(file, "r%3d: %s\n", round, buffer);
 	}
 }
 void Logger::err(const char* format, ...) noexcept {
@@ -68,11 +68,11 @@ void Logger::err(const char* format, ...) noexcept {
 	va_start(args, format);
 	vsprintf(buffer, format, args);
 	va_end(args);
-	fprintf(stderr, "%03d %s\n", round, buffer);
+	fprintf(stderr, "%3d %s\n", round, buffer);
 }
 void Logger::err(const std::string& str) noexcept {
 	if (!RELEASE) return;
-	fprintf(stderr, "%03d %s\n", round, str.c_str());
+	fprintf(stderr, "%3d %s\n", round, str.c_str());
 }
 void Logger::raw(const char* format, ...) noexcept {
 	if (!LOG_SWITCH) return;
@@ -84,7 +84,7 @@ void Logger::raw(const char* format, ...) noexcept {
 }
 bool Logger::warn_if(bool cond, const std::string& str) noexcept {
 	if (!RELEASE || !cond) return cond;
-	fprintf(stderr, "%03d [w] %s\n", round, str.c_str());
+	fprintf(stderr, "%3d [w] %s\n", round, str.c_str());
 	return cond;
 }
 void Logger::flush() noexcept {

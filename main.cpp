@@ -8,8 +8,29 @@
 
 class Oil_cluster {
 public:
-    int size;
-    std::vector<OilWell*> wells;
+    double total_dist;
+    const OilWell* center_well;
+    std::vector<const OilWell*> wells;
+
+    Oil_cluster(const OilWell* center_well) noexcept : total_dist(0.0), center_well(center_well) {}
+    bool operator<(const Oil_cluster& other) const noexcept {
+        if (wells.size() == other.wells.size()) return total_dist < other.total_dist;
+        return wells.size() < other.wells.size();
+    }
+
+    // 将距离敌方近的油井排在前面
+    void sort_wells(const Dist_map& enemy_dist) noexcept {
+        std::sort(wells.begin(), wells.end(), [&enemy_dist](const OilWell* a, const OilWell* b) {
+            return enemy_dist[a->position] < enemy_dist[b->position];
+        });
+    }
+
+    // 获取描述字符串
+    std::string str() const noexcept {
+        std::string ret{wrap("Cluster size %d with center %s, total distance %.0f:", wells.size(), center_well->position.str().c_str(), total_dist)};
+        for (const OilWell* well : wells) ret += wrap(" %s", well->position.str().c_str());
+        return ret;
+    }
 };
 
 enum class General_strategy_type {
@@ -42,6 +63,8 @@ public:
         // 初始操作
         if (game_state.round == 1) {
             my_operation_list.push_back(Operation::upgrade_generals(my_seat, QualityType::PRODUCTION));
+
+            identify_oil_clusters();
             return;
         }
 
@@ -103,20 +126,60 @@ public:
     }
 
 private:
-    std::vector<Oil_cluster> identify_oil_clusters() const;
+    std::vector<Oil_cluster> identify_oil_clusters() const {
+        static constexpr double MIN_ENEMY_DIST = 7.0;
+        static constexpr double MAX_DIST = 7.0;
+
+        static constexpr int MIN_CLUSTER_SIZE = 3;
+
+        std::vector<Oil_cluster> clusters;
+
+        // 计算敌方距离
+        Dist_map enemy_dist(game_state, game_state.generals[1 - my_seat]->position, {});
+
+        // 考虑各个油井作为中心的可能性
+        for (int i = 0, siz = game_state.generals.size(); i < siz; ++i) {
+            const OilWell* center_well = dynamic_cast<const OilWell*>(game_state.generals[i]);
+            if (center_well == nullptr || game_state[center_well->position].type == CellType::SWAMP) continue;
+
+            Dist_map dist_map(game_state, center_well->position, {});
+
+            // 搜索其它油井
+            Oil_cluster cluster(center_well);
+            cluster.wells.push_back(center_well);
+            for (int j = 0; j < siz; ++j) {
+                const OilWell* well = dynamic_cast<const OilWell*>(game_state.generals[j]);
+                if (well == nullptr || j == i) continue;
+
+                if (dist_map[well->position] <= MAX_DIST && enemy_dist[well->position] >= MIN_ENEMY_DIST) {
+                    cluster.wells.push_back(well);
+                    cluster.total_dist += dist_map[well->position];
+                }
+            }
+            if (cluster.wells.size() >= MIN_CLUSTER_SIZE) {
+                clusters.push_back(cluster);
+                cluster.sort_wells(enemy_dist);
+                logger.log(LOG_LEVEL_INFO, "Oil cluster: %s", cluster.str().c_str());
+            }
+        }
+
+        // 按数量和总距离排序
+        std::sort(clusters.begin(), clusters.end());
+        return clusters;
+    }
 
     void update_strategy() {
         strategies.clear();
 
         // 临时策略：以最近的油田为目标
-        for (int i = 0; i < game_state.generals.size(); ++i) {
+        for (int i = 0, siz = game_state.generals.size(); i < siz; ++i) {
             const Generals* general = game_state.generals[i];
             if (general->player != my_seat || dynamic_cast<const MainGenerals*>(general) == nullptr) continue;
 
             Dist_map dist_map(game_state, general->position, {});
 
             int best_well = -1;
-            for (int j = 0; j < game_state.generals.size(); ++j) {
+            for (int j = 0; j < siz; ++j) {
                 const Generals* oil_well = game_state.generals[j];
                 if (dynamic_cast<const OilWell*>(oil_well) == nullptr || oil_well->player == my_seat) continue;
                 if (best_well == -1 || dist_map[oil_well->position] < dist_map[game_state.generals[best_well]->position]) best_well = j;
