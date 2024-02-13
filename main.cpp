@@ -5,6 +5,7 @@
 #include "include/logger.hpp"
 
 #include <queue>
+#include <optional>
 
 class Oil_cluster {
 public:
@@ -43,6 +44,10 @@ enum class General_strategy_type {
 class Strategy_target {
 public:
     Coord coord;
+    const Generals* general;
+
+    Strategy_target(const Coord& coord) noexcept : coord(coord), general(nullptr) {}
+    Strategy_target(const Generals* general) noexcept : coord(general->position), general(general) {}
 };
 
 class General_strategy {
@@ -59,37 +64,73 @@ class myAI : public GameController {
 public:
     std::vector<General_strategy> strategies;
 
+    std::optional<Oil_cluster> cluster;
+
     void main_process() {
         // 初始操作
         if (game_state.round == 1) {
             my_operation_list.push_back(Operation::upgrade_generals(my_seat, QualityType::PRODUCTION));
 
-            identify_oil_clusters();
+            std::vector<Oil_cluster> clusters{identify_oil_clusters()};
+            if (!clusters.empty()) cluster = clusters[0];
             return;
         }
-
 
         // show_map(game_state, std::cerr);
         update_strategy();
 
+        bool can_rush = (game_state.coin[1 - my_seat] >= Constant::GENERAL_SKILL_COST[SkillType::RUSH]);
         for (const General_strategy& strategy : strategies) {
             const Generals* general = game_state.generals[strategy.general_id];
-            const Coord& target = strategy.target.coord;
             int curr_army = game_state[general->position].army;
 
-            Dist_map dist_map(game_state, target, {});
-            Direction dir = dist_map.direction_to_origin(general->position);
-            Coord next_pos = general->position + DIRECTION_ARR[dir];
-            const Cell& next_cell = game_state[next_pos];
+            if (strategy.type == General_strategy_type::DEFEND) {
 
-            logger.log(LOG_LEVEL_DEBUG, "General at %s(%d) -> %s(%d)", general->position.str().c_str(), curr_army, next_pos.str().c_str(), next_cell.army);
-            if (next_pos == target) {
-                if (curr_army - 1 > next_cell.army)
-                    my_operation_list.push_back(Operation::move_army(general->position, dir, next_cell.army + 1));
-            } else {
-                if (curr_army > 1 && (curr_army - 1 > (next_cell.player == my_seat ? 0 : next_cell.army))) {
-                    my_operation_list.push_back(Operation::move_army(general->position, dir, curr_army - 1));
-                    my_operation_list.push_back(Operation::move_generals(strategy.general_id, next_pos));
+            } else if (strategy.type == General_strategy_type::ATTACK) {
+
+            } else if (strategy.type == General_strategy_type::RETREAT) {
+                logger.log(LOG_LEVEL_INFO, "General %d retreating", strategy.general_id);
+                const Generals* enemy = strategy.target.general;
+
+                // 寻找能走到的最大有效距离
+                Coord best_pos{-1, -1};
+                int max_eff_dist = Dist_map::effect_dist(general->position, enemy->position, can_rush);
+                for (int dir = 0; dir < DIRECTION_COUNT; ++dir) {
+                    Coord next_pos = general->position + DIRECTION_ARR[dir];
+                    if (!next_pos.in_map() || !game_state.can_general_step_on(next_pos, my_seat)) continue;
+                    if (curr_army - 1 <= -game_state.eff_army(next_pos, my_seat)) continue;
+
+                    int eff_dist = Dist_map::effect_dist(next_pos, enemy->position, can_rush);
+                    logger.log(LOG_LEVEL_DEBUG, "Next pos %s, eff dist %d", next_pos.str().c_str(), eff_dist);
+                    if (eff_dist > max_eff_dist) {
+                        best_pos = next_pos;
+                        max_eff_dist = eff_dist;
+                    }
+                }
+
+                // 尝试移动（没有检查兵数的问题）
+                if (best_pos.in_map()) {
+                    if (curr_army > 1)
+                        my_operation_list.push_back(Operation::move_army(general->position, from_coord(general->position, best_pos), curr_army - 1));
+                    my_operation_list.push_back(Operation::move_generals(strategy.general_id, best_pos));
+                    logger.log(LOG_LEVEL_INFO, "General at %s -> %s, dist -> %d", general->position.str().c_str(), best_pos.str().c_str(), max_eff_dist);
+                }
+            } else if (strategy.type == General_strategy_type::OCCUPY) {
+                const Coord& target = strategy.target.coord;
+                Dist_map dist_map(game_state, target, {});
+                Direction dir = dist_map.direction_to_origin(general->position);
+                Coord next_pos = general->position + DIRECTION_ARR[dir];
+                const Cell& next_cell = game_state[next_pos];
+
+                logger.log(LOG_LEVEL_DEBUG, "General at %s(%d) -> %s(%d)", general->position.str().c_str(), curr_army, next_pos.str().c_str(), next_cell.army);
+                if (next_pos == target) {
+                    if (curr_army - 1 > next_cell.army)
+                        my_operation_list.push_back(Operation::move_army(general->position, dir, next_cell.army + 1));
+                } else {
+                    if (curr_army > 1 && (curr_army - 1 > (next_cell.player == my_seat ? 0 : next_cell.army))) {
+                        my_operation_list.push_back(Operation::move_army(general->position, dir, curr_army - 1));
+                        my_operation_list.push_back(Operation::move_generals(strategy.general_id, next_pos));
+                    }
                 }
             }
         }
@@ -171,24 +212,71 @@ private:
     void update_strategy() {
         strategies.clear();
 
-        // 临时策略：以最近的油田为目标
+        bool cluster_occupied = true;
+        if (cluster) for (const OilWell* well : cluster->wells)
+            if (game_state[well->position].player != my_seat) cluster_occupied = false;
+
         for (int i = 0, siz = game_state.generals.size(); i < siz; ++i) {
             const Generals* general = game_state.generals[i];
+            // 暂时只给主将分配策略
             if (general->player != my_seat || dynamic_cast<const MainGenerals*>(general) == nullptr) continue;
 
-            Dist_map dist_map(game_state, general->position, {});
+            int min_effect_dist = 1e8;
+            const Generals* nearest_enemy = nullptr;
+            for (int j = 0; j < siz; ++j) {
+                const Generals* enemy = game_state.generals[j];
+                if (enemy->player != 1 - my_seat || dynamic_cast<const OilWell*>(enemy) != nullptr) continue;
 
+                if (game_state[enemy->position].army >= game_state[general->position].army - 3) {
+                    int effect_dist = Dist_map::effect_dist(general->position, enemy->position, game_state.coin[1 - my_seat] >= Constant::GENERAL_SKILL_COST[SkillType::RUSH]);
+                    if (effect_dist < min_effect_dist) {
+                        min_effect_dist = effect_dist;
+                        nearest_enemy = enemy;
+                    }
+                }
+            }
+            if (min_effect_dist <= 0) {
+                strategies.emplace_back(General_strategy{i, General_strategy_type::RETREAT, Strategy_target(nearest_enemy)});
+                logger.log(LOG_LEVEL_INFO, "General %s retreat %s, eff dist %d", general->position.str().c_str(), nearest_enemy->position.str().c_str(), min_effect_dist);
+                continue;
+            }
+
+            // 找最近的油田
+            Dist_map dist_map(game_state, general->position, {});
             int best_well = -1;
             for (int j = 0; j < siz; ++j) {
                 const Generals* oil_well = game_state.generals[j];
                 if (dynamic_cast<const OilWell*>(oil_well) == nullptr || oil_well->player == my_seat) continue;
                 if (best_well == -1 || dist_map[oil_well->position] < dist_map[game_state.generals[best_well]->position]) best_well = j;
             }
+
+            // 3格内油田优先
+            if (best_well != -1 && dist_map[game_state.generals[best_well]->position] <= 3.0) {
+                strategies.emplace_back(General_strategy{i, General_strategy_type::OCCUPY, Strategy_target{game_state.generals[best_well]->position}});
+                logger.log(LOG_LEVEL_INFO, "General %s -> oil well %s (near)", general->position.str().c_str(), game_state.generals[best_well]->position.str().c_str());
+                continue;
+            }
+
+            // 优先采用cluster中的油田
+            if (cluster) {
+                bool found = false;
+                for (const OilWell* well : cluster->wells) {
+                    if (game_state[well->position].player != my_seat && dist_map[well->position] < 1e8) {
+                        strategies.emplace_back(General_strategy{i, General_strategy_type::OCCUPY, Strategy_target{well->position}});
+                        logger.log(LOG_LEVEL_INFO, "General %s -> oil well %s (cluster)", general->position.str().c_str(), well->position.str().c_str());
+                        found = true;
+                        break;
+                    }
+                }
+                if (found) continue;
+            }
+
+            // 否则取最近油田
             if (best_well == -1 || dist_map[game_state.generals[best_well]->position] > 1e8)
                 logger.log(LOG_LEVEL_WARN, "No oil well found for general at %s", general->position.str().c_str());
             else {
                 strategies.emplace_back(General_strategy{i, General_strategy_type::OCCUPY, Strategy_target{game_state.generals[best_well]->position}});
-                logger.log(LOG_LEVEL_INFO, "General at %s -> oil well %s", general->position.str().c_str(), game_state.generals[best_well]->position.str().c_str());
+                logger.log(LOG_LEVEL_INFO, "General %s -> oil well %s", general->position.str().c_str(), game_state.generals[best_well]->position.str().c_str());
             }
         }
     }
