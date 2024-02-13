@@ -128,8 +128,8 @@ Direction from_coord(const Coord& from, const Coord& to) noexcept {
     assert(to.dist_to(from) == 1);
     if (from.x < to.x) return RIGHT;
     if (from.x > to.x) return LEFT;
-    if (from.y < to.y) return DOWN;
-    if (from.y > to.y) return UP;
+    if (from.y < to.y) return UP;
+    if (from.y > to.y) return DOWN;
     assert(!"from == to");
     return LEFT;
 }

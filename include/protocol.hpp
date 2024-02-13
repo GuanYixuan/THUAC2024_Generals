@@ -66,12 +66,19 @@ std::vector<Operation> read_enemy_operations() {
 
     operations.clear();
     while (true) {
-        std::cin >> op_type;
+        std::string line;
+        std::getline(std::cin, line);
+        std::stringstream ss(line);
+
+        // 读取操作类型
+        ss >> op_type;
         // 操作结束
         if (op_type == 8) break;
+
         // 读取参数
-        while ((ch = getchar()) != '\n') {
-            std::cin >> param;
+        while (true) {
+            ss >> param;
+            if (ss.fail()) break;
             params.push_back(param);
         }
         operations.emplace_back(static_cast<OperationType>(op_type), params);
