@@ -287,7 +287,7 @@ bool skill_activate(int player, const Coord& location, const Coord& destination,
     if (!location.in_map()) return false; // 如果位置坐标超出范围，则返回false
 
     // 只有前两种技能是有“目标位置”的
-    if (skillType == SkillType::RUSH || skillType == SkillType::ROUT) {
+    if (skillType == SkillType::RUSH || skillType == SkillType::STRIKE) {
         if (!destination.in_map()) return false; // 如果目的地坐标超出范围，则返回false
         if (!destination.in_attack_range(location)) return false; // 如果目的地与当前位置之间的距离超过“攻击范围”，则返回false
     }
@@ -317,7 +317,7 @@ bool skill_activate(int player, const Coord& location, const Coord& destination,
         gamestate[destination].generals = general;
         gamestate[location].generals = nullptr;
         army_rush(location, gamestate, player, destination);
-    } else if (skillType == SkillType::ROUT) {
+    } else if (skillType == SkillType::STRIKE) {
         if (!handle_breakthrough(destination, gamestate)) return false;
     }
     gamestate.coin[player] -= skillType.cost();

@@ -8,6 +8,8 @@
 #include <algorithm>
 #include "constant.hpp"
 
+#define M_PI (3.14159265358979323846)
+
 // 坐标类
 class Coord {
 public:
@@ -23,8 +25,9 @@ public:
     // 比较与算术运算
     constexpr bool operator==(const Coord& other) const noexcept { return x == other.x && y == other.y; }
     constexpr bool operator!=(const Coord& other) const noexcept { return x != other.x || y != other.y; }
-    Coord operator+(const Coord& other) const noexcept { return Coord(x + other.x, y + other.y); }
-    Coord operator-(const Coord& other) const noexcept { return Coord(x - other.x, y - other.y); }
+    constexpr Coord operator+(const Coord& other) const noexcept { return Coord(x + other.x, y + other.y); }
+    constexpr Coord operator-(const Coord& other) const noexcept { return Coord(x - other.x, y - other.y); }
+    constexpr int operator*(const Coord& other) const noexcept { return x * other.x + y * other.y; }
 
     // 获取描述字符串
     std::string str() const noexcept { return wrap("(%2d, %2d)", x, y); }
@@ -46,6 +49,15 @@ public:
     constexpr int dist_to(const Coord& other) const noexcept {
         return std::abs(x - other.x) + std::abs(y - other.y);
     }
+    // 计算此位置到另一个位置的欧几里得距离
+    constexpr double euclidean_dist(const Coord& other) const noexcept {
+        return std::sqrt((x - other.x) * (x - other.x) + (y - other.y) * (y - other.y));
+    }
+
+    // 将此`Coord`对象视为二维向量，计算其与另一个`Coord`对象的夹角
+    double angle_to(const Coord& other) const noexcept {
+        return std::acos((double)(*this * other) / (x * x + y * y) / (other.x * other.x + other.y * other.y));
+    }
 
 };
 
@@ -54,7 +66,7 @@ class SkillType {
 public:
     enum __Inner_type : int8_t {
         RUSH = 0,
-        ROUT = 1,
+        STRIKE = 1,
         COMMAND = 2,
         DEFENCE = 3,
         WEAKEN = 4
@@ -81,7 +93,7 @@ public:
     constexpr const char* str() const noexcept { return __str[static_cast<int>(__val)]; }
 
 private:
-    constexpr static const char* __str[5] = {"RUSH", "ROUT", "COMMAND", "DEFENCE", "WEAKEN"};
+    constexpr static const char* __str[5] = {"RUSH", "STRIKE", "COMMAND", "DEFENCE", "WEAKEN"};
 };
 
 // 将军属性类型

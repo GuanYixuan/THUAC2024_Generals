@@ -4,6 +4,7 @@
 #include "include/assess.hpp"
 #include "include/logger.hpp"
 
+#include <cmath>
 #include <queue>
 #include <optional>
 
@@ -228,30 +229,76 @@ private:
         if (cluster) for (const OilWell* well : cluster->wells)
             if (game_state[well->position].player != my_seat) cluster_occupied = false;
 
-
         bool can_rush = (game_state.coin[1 - my_seat] >= Constant::GENERAL_SKILL_COST[SkillType::RUSH]);
+        bool can_strike = (game_state.coin[1 - my_seat] >= Constant::GENERAL_SKILL_COST[SkillType::STRIKE]);
+        bool can_strike_rush = (game_state.coin[1 - my_seat] >= Constant::GENERAL_SKILL_COST[SkillType::RUSH] + Constant::GENERAL_SKILL_COST[SkillType::STRIKE]);
         for (int i = 0, siz = game_state.generals.size(); i < siz; ++i) {
             const Generals* general = game_state.generals[i];
             // 暂时只给主将分配策略
             if (general->player != my_seat || dynamic_cast<const MainGenerals*>(general) == nullptr) continue;
 
+            int curr_army = game_state[general->position].army;
+            double defence_mult = game_state.defence_multiplier(general->position);
+
+            // 考虑是否在危险范围内
             int min_effect_dist = 1e8;
             const Generals* nearest_enemy = nullptr;
             for (int j = 0; j < siz; ++j) {
                 const Generals* enemy = game_state.generals[j];
+                int enemy_army = game_state[enemy->position].army;
                 if (enemy->player != 1 - my_seat || dynamic_cast<const OilWell*>(enemy) != nullptr) continue;
 
-                if (game_state[enemy->position].army >= game_state[general->position].army - 3) {
+                // 直接攻击
+                if (enemy_army > curr_army * defence_mult) {
                     int effect_dist = Dist_map::effect_dist(general->position, enemy->position, can_rush);
                     if (effect_dist < min_effect_dist) {
                         min_effect_dist = effect_dist;
                         nearest_enemy = enemy;
                     }
                 }
+                // 空袭+攻击
+                else if (can_strike && enemy_army > std::max(0, curr_army - Constant::STRIKE_DAMAGE) * defence_mult) {
+                    int effect_dist = Dist_map::effect_dist(general->position, enemy->position, can_strike_rush);
+                    if (effect_dist < min_effect_dist) {
+                        min_effect_dist = effect_dist;
+                        nearest_enemy = enemy;
+                    }
+                }
             }
-            if (min_effect_dist <= 0) {
+            // 在范围内则撤退
+            if (min_effect_dist < 0) {
                 strategies.emplace_back(General_strategy{i, General_strategy_type::RETREAT, Strategy_target(nearest_enemy)});
                 logger.log(LOG_LEVEL_INFO, "General %s retreat %s, eff dist %d", general->position.str().c_str(), nearest_enemy->position.str().c_str(), min_effect_dist);
+                continue;
+            }
+            // 在边缘处则考虑相持
+            else if (min_effect_dist == 0) {
+                bool found = false;
+                // 选择在自己前方的油田
+                Dist_map dist_map(game_state, general->position, {});
+                for (int j = 0; j < siz; ++j) {
+                    const OilWell* oil_well = dynamic_cast<const OilWell*>(game_state.generals[j]);
+                    if (oil_well == nullptr || oil_well->player == my_seat) continue;
+                    if (dist_map[oil_well->position] <= 4 && (oil_well->position - general->position).angle_to(nearest_enemy->position - general->position) <= M_PI / 2) {
+                        strategies.emplace_back(General_strategy{i, General_strategy_type::DEFEND, Strategy_target{oil_well->position}});
+                        logger.log(LOG_LEVEL_INFO, "General %s try to occupy oil well %s", general->position.str().c_str(), oil_well->position.str().c_str());
+                        found = true;
+                        break;
+                    }
+                }
+                if (found) continue;
+
+                // 选择最近的己方油田
+                const OilWell* best_well = nullptr;
+                for (int j = 0; j < siz; ++j) {
+                    const OilWell* oil_well = dynamic_cast<const OilWell*>(game_state.generals[j]);
+                    if (oil_well == nullptr || oil_well->player != my_seat) continue;
+                    if (best_well == nullptr || dist_map[oil_well->position] < dist_map[best_well->position]) best_well = oil_well;
+                }
+                if (best_well) {
+                    strategies.emplace_back(General_strategy{i, General_strategy_type::DEFEND, Strategy_target{best_well->position}});
+                    logger.log(LOG_LEVEL_INFO, "General %s defend oil well %s", general->position.str().c_str(), best_well->position.str().c_str());
+                } else logger.log(LOG_LEVEL_INFO, "General %s has no target to defend", general->position.str().c_str());
                 continue;
             }
 
