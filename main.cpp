@@ -175,7 +175,8 @@ private:
 
         std::vector<Oil_cluster> clusters;
 
-        // 计算敌方距离
+        // 计算双方距离
+        Dist_map my_dist(game_state, game_state.generals[my_seat]->position, {});
         Dist_map enemy_dist(game_state, game_state.generals[1 - my_seat]->position, {});
 
         // 考虑各个油井作为中心的可能性
@@ -183,6 +184,9 @@ private:
             const OilWell* center_well = dynamic_cast<const OilWell*>(game_state.generals[i]);
             if (center_well == nullptr || game_state[center_well->position].type == CellType::SWAMP) continue;
 
+            // 计算距离
+            int my_dist_to_center = my_dist[center_well->position];
+            int enemy_dist_to_center = enemy_dist[center_well->position];
             Dist_map dist_map(game_state, center_well->position, {});
 
             // 搜索其它油井
@@ -197,11 +201,19 @@ private:
                     cluster.total_dist += dist_map[well->position];
                 }
             }
-            if (cluster.wells.size() >= MIN_CLUSTER_SIZE) {
-                clusters.push_back(cluster);
-                cluster.sort_wells(enemy_dist);
-                logger.log(LOG_LEVEL_INFO, "Oil cluster: %s", cluster.str().c_str());
+
+            // 去掉太小的
+            if (cluster.wells.size() < MIN_CLUSTER_SIZE) continue;
+
+            // 过滤距离太过悬殊的
+            if (my_dist_to_center >= 5 && my_dist_to_center >= 2 * enemy_dist_to_center) {
+                logger.log(LOG_LEVEL_INFO, "Oil cluster too far (%d vs %d) %s", my_dist_to_center, enemy_dist_to_center, cluster.str().c_str());
+                continue;
             }
+
+            clusters.push_back(cluster);
+            cluster.sort_wells(enemy_dist);
+            logger.log(LOG_LEVEL_INFO, cluster.str().c_str());
         }
 
         // 按数量和总距离排序
@@ -216,6 +228,8 @@ private:
         if (cluster) for (const OilWell* well : cluster->wells)
             if (game_state[well->position].player != my_seat) cluster_occupied = false;
 
+
+        bool can_rush = (game_state.coin[1 - my_seat] >= Constant::GENERAL_SKILL_COST[SkillType::RUSH]);
         for (int i = 0, siz = game_state.generals.size(); i < siz; ++i) {
             const Generals* general = game_state.generals[i];
             // 暂时只给主将分配策略
@@ -228,7 +242,7 @@ private:
                 if (enemy->player != 1 - my_seat || dynamic_cast<const OilWell*>(enemy) != nullptr) continue;
 
                 if (game_state[enemy->position].army >= game_state[general->position].army - 3) {
-                    int effect_dist = Dist_map::effect_dist(general->position, enemy->position, game_state.coin[1 - my_seat] >= Constant::GENERAL_SKILL_COST[SkillType::RUSH]);
+                    int effect_dist = Dist_map::effect_dist(general->position, enemy->position, can_rush);
                     if (effect_dist < min_effect_dist) {
                         min_effect_dist = effect_dist;
                         nearest_enemy = enemy;

@@ -169,11 +169,9 @@ void GameController::finish_and_send_our_ops() {
 
     // 结束我方操作回合，将操作列表打包发送并清空。
     std::string msg = "";
-    for (const auto &op : my_operation_list)
-    {
-        msg += op.stringize();
-    }
+    for (const auto &op : my_operation_list) msg += op.stringize();
     msg += "8\n";
     write_to_judger(msg);
+
     my_operation_list.clear();
 }
