@@ -290,6 +290,10 @@ public:
         return board[pos.x][pos.y];
     }
 
+    // 计算某玩家的军队【从`pos`出发时】获得的攻击力加成，玩家默认为拥有此格的玩家
+    double attack_multiplier(const Coord& pos, int player = std::numeric_limits<int>::min()) const noexcept;
+    // 计算某玩家防御某格时获得的防御力加成，玩家默认为拥有此格的玩家
+    double defence_multiplier(const Coord& pos, int player = std::numeric_limits<int>::min()) const noexcept;
     // 返回某格上某玩家的有效士兵数，负数表示敌军
     int eff_army(const Coord& pos, int player) const noexcept {
         assert(pos.in_map());
@@ -321,6 +325,78 @@ public:
     void update_round() noexcept;
 };
 
+// ******************** GameState ********************
+
+double GameState::attack_multiplier(const Coord& pos, int player) const noexcept {
+    assert(pos.in_map());
+
+    double attack = 1.0;
+    int cell_x = pos.x, cell_y = pos.y;
+    const Cell& cell = board[cell_x][cell_y];
+    if (player == std::numeric_limits<int>::min()) player = cell.player;
+
+    // 遍历cell周围至少5*5的区域，寻找里面是否有将军，他们是否使用了增益或减益技能
+    for (int i = -Constant::GENERAL_ATTACK_RADIUS; i <= Constant::GENERAL_ATTACK_RADIUS; ++i) {
+        for (int j = -Constant::GENERAL_ATTACK_RADIUS; j <= Constant::GENERAL_ATTACK_RADIUS; ++j) {
+            int x = cell_x + i;
+            int y = cell_y + j;
+            if (0 <= x && x < Constant::row && 0 <= y && y < Constant::col) {
+                const Cell &neighbor_cell = board[x][y];
+                if (neighbor_cell.generals == nullptr) continue;
+
+                if (neighbor_cell.player == player && neighbor_cell.generals->skill_duration[SkillType::COMMAND] > 0)
+                    attack *= Constant::GENERAL_SKILL_EFFECT[SkillType::COMMAND];
+                if (neighbor_cell.player != player && neighbor_cell.generals->skill_duration[SkillType::WEAKEN] > 0)
+                    attack *= Constant::GENERAL_SKILL_EFFECT[SkillType::WEAKEN];
+            }
+        }
+    }
+    // 考虑gamestate中的超级武器是否被激活，（可以获取到激活的位置）该位置的军队是否会被影响
+    for (const SuperWeapon &weapon : active_super_weapon) {
+        if (weapon.type == WeaponType::ATTACK_ENHANCE && pos.in_super_weapon_range(weapon.position) && weapon.player == player) {
+            attack *= Constant::ATTACK_ENHANCE_EFFECT;
+            break;
+        }
+    }
+
+    return attack;
+}
+double GameState::defence_multiplier(const Coord& pos, int player) const noexcept {
+    assert(pos.in_map());
+
+    double defence = 1.0;
+    int cell_x = pos.x, cell_y = pos.y;
+    const Cell& cell = board[cell_x][cell_y];
+    if (player == std::numeric_limits<int>::min()) player = cell.player;
+
+    // 遍历cell周围至少5*5的区域，寻找里面是否有将军，他们是否使用了增益或减益技能
+    for (int i = -Constant::GENERAL_ATTACK_RADIUS; i <= Constant::GENERAL_ATTACK_RADIUS; ++i) {
+        for (int j = -Constant::GENERAL_ATTACK_RADIUS; j <= Constant::GENERAL_ATTACK_RADIUS; ++j) {
+            int x = cell_x + i;
+            int y = cell_y + j;
+            if (0 <= x && x < Constant::row && 0 <= y && y < Constant::col) {
+                const Cell &neighbor_cell = board[x][y];
+                if (neighbor_cell.generals == nullptr) continue;
+
+                if (neighbor_cell.player == player && neighbor_cell.generals->skill_duration[SkillType::DEFENCE] > 0)
+                    defence *= Constant::GENERAL_SKILL_EFFECT[SkillType::DEFENCE];
+                if (neighbor_cell.player != player && neighbor_cell.generals->skill_duration[SkillType::WEAKEN] > 0)
+                    defence *= Constant::GENERAL_SKILL_EFFECT[SkillType::WEAKEN];
+            }
+        }
+    }
+    // 考虑cell上是否有general，它的防御力是否被升级
+    if (cell.generals != nullptr) defence *= cell.generals->defence_level;
+    // 考虑gamestate中的超级武器是否被激活，（可以获取到激活的位置）该位置的军队是否会被影响
+    for (const SuperWeapon &weapon : active_super_weapon) {
+        if (weapon.type == WeaponType::ATTACK_ENHANCE && pos.in_super_weapon_range(weapon.position) && weapon.player == player) {
+            defence *= Constant::ATTACK_ENHANCE_EFFECT;
+            break;
+        }
+    }
+
+    return defence;
+}
 void GameState::update_round() noexcept {
     for (int i = 0; i < Constant::row; ++i) {
         for (int j = 0; j < Constant::col; ++j) {
@@ -384,6 +460,8 @@ void GameState::update_round() noexcept {
     ++this->round;
 }
 
+// ******************* MainGenerals、SubGenerals以及OilWell ********************
+
 bool MainGenerals::production_up(GameState &gamestate, int player) {
     for (int i = 0; i < Constant::GENERAL_PRODUCTION_LEVELS; ++i) {
         if (produce_level == Constant::GENERAL_PRODUCTION_VALUES[i]) {
@@ -424,7 +502,6 @@ bool MainGenerals::movement_up(GameState &gamestate, int player) {
     }
     return false;
 }
-
 bool SubGenerals::production_up(GameState &gamestate, int player) {
     for (int i = 0; i < Constant::GENERAL_PRODUCTION_LEVELS; ++i) {
         if (produce_level == Constant::GENERAL_PRODUCTION_VALUES[i]) {
@@ -462,7 +539,6 @@ bool SubGenerals::movement_up(GameState &gamestate, int player) {
     }
     return false;
 }
-
 bool OilWell::production_up(GameState &gamestate, int player) {
     for (int i = 0; i < Constant::OILWELL_PRODUCTION_LEVELS; ++i) {
         if (produce_level == Constant::OILWELL_PRODUCTION_VALUES[i]) {

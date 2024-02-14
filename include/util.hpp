@@ -35,104 +35,6 @@ bool call_generals(GameState &gamestate, int player, const Coord& location) {
     return true;
 }
 
-/*
-### `float compute_attack(Cell cell, GameState gamestate)`
-
-* 描述：计算指定格子的攻击力。
-* 参数：
-  * `Cell cell`：目标格子。
-  * `GameState gamestate`：游戏状态对象。
-* 返回值：攻击力值。
- */
-float compute_attack(const Cell &cell, const GameState &gamestate) {
-    float attack = 1.0;
-    int cell_x = cell.position.x;
-    int cell_y = cell.position.y;
-    // 遍历cell周围至少5*5的区域，寻找里面是否有将军，他们是否使用了增益或减益技能
-    for (int i = -Constant::GENERAL_ATTACK_RADIUS; i <= Constant::GENERAL_ATTACK_RADIUS; ++i) {
-        for (int j = -Constant::GENERAL_ATTACK_RADIUS; j <= Constant::GENERAL_ATTACK_RADIUS; ++j) {
-            int x = cell_x + i;
-            int y = cell_y + j;
-            if (0 <= x && x < Constant::row && 0 <= y && y < Constant::col) {
-                const Cell &neighbor_cell = gamestate.board[x][y];
-                if (neighbor_cell.generals != nullptr) {
-                    if (neighbor_cell.player == cell.player && neighbor_cell.generals->skill_duration[SkillType::COMMAND] > 0)
-                        attack *= Constant::GENERAL_SKILL_EFFECT[SkillType::COMMAND];
-                    if (neighbor_cell.player != cell.player && neighbor_cell.generals->skill_duration[SkillType::WEAKEN] > 0)
-                        attack *= Constant::GENERAL_SKILL_EFFECT[SkillType::WEAKEN];
-                }
-            }
-        }
-    }
-    // 考虑gamestate中的超级武器是否被激活，（可以获取到激活的位置）该位置的军队是否会被影响
-    for (const SuperWeapon &weapon : gamestate.active_super_weapon) {
-        if (weapon.type == WeaponType::ATTACK_ENHANCE && cell.position.in_super_weapon_range(weapon.position) &&
-            weapon.player == cell.player)
-        {
-            attack = attack * 3;
-            break;
-        }
-    }
-
-    return attack;
-}
-
-/* ### `float compute_defence(Cell cell, GameState gamestate)`
-
-* 描述：计算指定格子的防御力。
-* 参数：
-  * `Cell cell`：目标格子。
-  * `GameState gamestate`：游戏状态对象。
-* 返回值：防御力值。 */
-float compute_defence(const Cell &cell, const GameState &gamestate) {
-    float defence = 1.0;
-    int cell_x = cell.position.x;
-    int cell_y = cell.position.y;
-    // 遍历cell周围至少5*5的区域，寻找里面是否有将军，他们是否使用了增益或减益技能
-    for (int i = -Constant::GENERAL_ATTACK_RADIUS; i <= Constant::GENERAL_ATTACK_RADIUS; ++i) {
-        for (int j = -Constant::GENERAL_ATTACK_RADIUS; j <= Constant::GENERAL_ATTACK_RADIUS; ++j) {
-            int x = cell_x + i;
-            int y = cell_y + j;
-            if (0 <= x && x < Constant::row && 0 <= y && y < Constant::col) {
-                const Cell &neighbor_cell = gamestate.board[x][y];
-                if (neighbor_cell.generals != nullptr) {
-                    if (neighbor_cell.player == cell.player && neighbor_cell.generals->skill_duration[SkillType::DEFENCE] > 0)
-                        defence *= Constant::GENERAL_SKILL_EFFECT[SkillType::DEFENCE];
-                    if (neighbor_cell.player != cell.player && neighbor_cell.generals->skill_duration[SkillType::WEAKEN] > 0)
-                        defence *= Constant::GENERAL_SKILL_EFFECT[SkillType::WEAKEN];
-                }
-            }
-        }
-    }
-    // 考虑cell上是否有general，它的防御力是否被升级
-    if (cell.generals != nullptr) defence *= cell.generals->defence_level;
-    // 考虑gamestate中的超级武器是否被激活，（可以获取到激活的位置）该位置的军队是否会被影响
-    for (const SuperWeapon &weapon : gamestate.active_super_weapon) {
-        if (
-            weapon.type == WeaponType::ATTACK_ENHANCE && cell.position.in_super_weapon_range(weapon.position) &&
-            weapon.player == cell.player)
-        {
-            defence = defence * 3;
-            break;
-        }
-    }
-
-    return defence;
-}
-
-/* ### `const Coord& calculate_new_pos(const Coord& location, Direction direction)`
-
-* 描述：根据移动方向计算新的位置。
-* 参数：
-  * `const Coord& location`：当前位置。
-  * `Direction direction`：移动方向。
-* 返回值：新的位置坐标。 */
-Coord calculate_new_pos(const Coord& location, Direction direction) {
-    Coord new_location = location + DIRECTION_ARR[direction];
-    if (!new_location.in_map()) return {-1, -1};
-    return new_location;
-}
-
 /* ### `bool army_move(const const Coord& location, GameState &gamestate, int player, Direction direction, int num)`
 
 * 描述：执行军队移动操作。
@@ -159,19 +61,18 @@ bool army_move(const Coord& location, GameState &gamestate, int player, Directio
             return false; // 时间暂停效果
     }
 
-    const Coord& new_position = calculate_new_pos(location, direction);
-    int newX = new_position.x, newY = new_position.y;
-    Cell& new_cell = gamestate.board[newX][newY];
+    const Coord& new_position = location + DIRECTION_ARR[direction];
+    Cell& new_cell = gamestate[new_position];
 
-    if (newX < 0) return false; // 越界
+    if (!new_position.in_map()) return false; // 越界
     if (new_cell.type == CellType::SWAMP && gamestate.tech_level[player][1] == 0) return false; // 不能经过沼泽
 
     if (new_cell.player == player) { // 目的地格子己方所有
         new_cell.army += num;
         cell.army -= num;
     } else if (new_cell.player == 1 - player || new_cell.player == -1) { // 攻击敌方或无主格子
-        float attack = compute_attack(cell, gamestate);
-        float defence = compute_defence(new_cell, gamestate);
+        float attack = gamestate.attack_multiplier(location);
+        float defence = gamestate.defence_multiplier(new_position);
         float vs = num * attack - new_cell.army * defence;
         if (vs > 0) { // 攻下
             new_cell.player = player;
@@ -288,30 +189,31 @@ bool general_move(const Coord& location, GameState &gamestate, int player, const
   * `const Coord& destination`：目标位置。
 * 返回值：如果处理成功，返回 `true`；否则返回 `false`。 */
 bool army_rush(const Coord& location, GameState &gamestate, int player, const Coord& destination) {
-    int x = location.x, y = location.y;			   // 获取当前位置
-    int new_x = destination.x, new_y = destination.y; // 获取目标位置
-    int num = gamestate.board[x][y].army - 1;				   // 计算移动的军队数量
+    assert(location.in_map() && destination.in_map());
+    Cell& old_cell = gamestate[location];
+    Cell& new_cell = gamestate[destination];
+    int num = old_cell.army - 1; // 计算移动的军队数量
 
     // 如果目标位置没有玩家
-    if (gamestate.board[new_x][new_y].player == -1) {
-        gamestate.board[new_x][new_y].army += num;
-        gamestate.board[x][y].army -= num;
-        gamestate.board[new_x][new_y].player = player; // 设置目标位置的玩家
+    if (new_cell.player == -1) {
+        new_cell.army += num;
+        old_cell.army -= num;
+        new_cell.player = player; // 设置目标位置的玩家
     }
     // 如果目标位置是当前玩家
-    else if (gamestate.board[new_x][new_y].player == player) {
-        gamestate.board[x][y].army -= num;		   // 减少当前位置的军队数量
-        gamestate.board[new_x][new_y].army += num; // 增加目标位置的军队数量
+    else if (new_cell.player == player) {
+        old_cell.army -= num;		   // 减少当前位置的军队数量
+        new_cell.army += num; // 增加目标位置的军队数量
     }
     // 如果目标位置是对手玩家
-    else if (gamestate.board[new_x][new_y].player == 1 - player) {
-        float attack = compute_attack(gamestate.board[x][y], gamestate);		   // 计算攻击力
-        float defence = compute_defence(gamestate.board[new_x][new_y], gamestate); // 计算防御力
-        float vs = num * attack - gamestate.board[new_x][new_y].army * defence;	   // 计算战斗结果
-        assert(vs > 0);															   // 确保战斗结果为正
-        gamestate.board[new_x][new_y].player = player;							   // 设置目标位置的玩家
-        gamestate.board[new_x][new_y].army = (int)(std::ceil(vs / attack));		   // 设置目标位置的军队数量
-        gamestate.board[x][y].army -= num;										   // 减少当前位置的军队数量
+    else if (new_cell.player == 1 - player) {
+        float attack = gamestate.attack_multiplier(location);
+        float vs = num * attack - new_cell.army * gamestate.defence_multiplier(destination); // 计算战斗结果
+        assert(vs > 0); // 确保战斗结果为正
+
+        new_cell.player = player;
+        new_cell.army = (int)(std::ceil(vs / attack));
+        old_cell.army -= num;
     }
     return true; // 返回成功
 }
@@ -326,23 +228,22 @@ bool army_rush(const Coord& location, GameState &gamestate, int player, const Co
   * `const Coord& location`：当前位置。
   * `GameState &gamestate`：游戏状态对象的引用。
 * 返回值：如果参数合法，返回 `true`；否则返回 `false`。 */
-bool check_rush_param(int player, const Coord& destination, const Coord& location, GameState &gamestate) {
-    int x = location.x, y = location.y;			   // 获取当前位置
-    int x_new = destination.x, y_new = destination.y; // 获取目标位置
+bool check_rush_param(int player, const Coord& destination, const Coord& location, const GameState &gamestate) {
+    if (!location.in_map() || !destination.in_map()) return false;
+    const Cell& old_cell = gamestate[location];
+    const Cell& new_cell = gamestate[destination];
 
     // 检查参数合理性
-    if (gamestate[location].generals == nullptr) return false; // 如果当前位置没有将军，返回失败
-    if (gamestate[location].army < 2) return false; // 如果当前位置的军队数量小于2，返回失败
-    if (gamestate[destination].generals != nullptr) return false; // 如果目标位置有将军，返回失败
-    if (gamestate[destination].type == CellType::SWAMP && gamestate.tech_level[player][static_cast<int>(TechType::IMMUNE_SWAMP)] == 0)
+    if (old_cell.generals == nullptr) return false; // 如果当前位置没有将军，返回失败
+    if (old_cell.army < 2) return false; // 如果当前位置的军队数量小于2，返回失败
+    if (new_cell.generals != nullptr) return false; // 如果目标位置有将军，返回失败
+    if (new_cell.type == CellType::SWAMP && gamestate.tech_level[player][static_cast<int>(TechType::IMMUNE_SWAMP)] == 0)
         return false; // 如果目标位置是沼泽且玩家没有免疫沼泽技能，返回失败
 
     // 如果目标位置是对手玩家
-    if (gamestate[destination].player == 1 - player) {
-        int num = gamestate.board[x][y].army - 1;								   // 计算移动的军队数量
-        float attack = compute_attack(gamestate.board[x][y], gamestate);		   // 计算攻击力
-        float defence = compute_defence(gamestate.board[x_new][y_new], gamestate); // 计算防御力
-        float vs = num * attack - gamestate[destination].army * defence;	   // 计算战斗结果
+    if (new_cell.player == 1 - player) {
+        int num = old_cell.army - 1; // 计算移动的军队数量
+        float vs = num * gamestate.attack_multiplier(location) - new_cell.army * gamestate.defence_multiplier(destination);
         if (vs <= 0) return false; // 如果战斗结果为负，返回失败
     }
     return true; // 返回成功

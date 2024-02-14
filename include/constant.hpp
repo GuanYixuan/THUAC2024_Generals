@@ -16,8 +16,7 @@
     return std::string(buffer);
 }
 
-class Constant {
-public:
+namespace Constant {
     // 玩家数量
     static constexpr int PLAYER_COUNT = 2;
 
@@ -93,4 +92,6 @@ public:
     // 辐射效果每回合的伤害
     static constexpr int NUCLEAR_BOMB_DAMAGE = 3;
 
+    // 攻击强化效果的倍数
+    static constexpr double ATTACK_ENHANCE_EFFECT = 3.0;
 };
