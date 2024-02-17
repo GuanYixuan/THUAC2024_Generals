@@ -1,9 +1,12 @@
 #pragma once
-#include "gamestate.hpp"
-#include "json.hpp"
+
 #include <vector>
 #include <tuple>
 #include <iostream>
+
+#include "json.hpp"
+#include "operation.hpp"
+#include "gamestate.hpp"
 
 /**
  * @brief 读取初始地图及先后手信息
@@ -62,7 +65,6 @@ std::vector<Operation> read_enemy_operations() {
     static std::vector<Operation> operations;
     static std::vector<int> params;
     int param, op_type;
-    char ch;
 
     operations.clear();
     while (true) {

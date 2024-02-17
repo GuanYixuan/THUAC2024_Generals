@@ -185,21 +185,17 @@ public:
     // 剩余移动步数
     int rest_move;
 
+    // 获取升级开销
+    virtual int production_upgrade_cost() const noexcept = 0;
+    virtual int defence_upgrade_cost() const noexcept = 0;
+    virtual int movement_upgrade_cost() const noexcept = 0;
+
     // 提升生产力
-    virtual bool production_up(GameState &gamestate, int player) {
-        assert(false);
-        return false;
-    }
+    virtual bool production_up(GameState &gamestate, int player) noexcept = 0;
     // 提升防御力
-    virtual bool defence_up(GameState &gamestate, int player) {
-        assert(false);
-        return false;
-    }
+    virtual bool defence_up(GameState &gamestate, int player) noexcept = 0;
     // 提升移动力
-    virtual bool movement_up(GameState &gamestate, int player) {
-        assert(false);
-        return false;
-    }
+    virtual bool movement_up(GameState &gamestate, int player) noexcept = 0;
     Generals(int id, int player, Coord position) noexcept:
         id(id), player(player), position(position),
         produce_level(1), defence_level(1), mobility_level(1),
@@ -210,31 +206,97 @@ public:
 };
 
 // 油井类，继承自将军基类
-class OilWell : public Generals {
+class OilWell final: public Generals {
 public:
-    virtual bool production_up(GameState &gamestate, int player) override;
-    virtual bool defence_up(GameState &gamestate, int player) override;
-    virtual bool movement_up(GameState &gamestate, int player) override { return false; }
+    int production_upgrade_cost() const noexcept override {
+        for (int i = 0; i < Constant::OILWELL_PRODUCTION_LEVELS; ++i)
+            if (produce_level == Constant::OILWELL_PRODUCTION_VALUES[i])
+                return Constant::OILWELL_PRODUCTION_COST[i];
+        assert(false);
+        return 0;
+    }
+    int defence_upgrade_cost() const noexcept override {
+        for (int i = 0; i < Constant::OILWELL_DEFENCE_LEVELS; ++i)
+            if (defence_level == Constant::OILWELL_DEFENCE_VALUES[i])
+                return Constant::OILWELL_DEFENCE_COST[i];
+        assert(false);
+        return 0;
+    }
+    int movement_upgrade_cost() const noexcept override {
+        assert(false);
+        return 0;
+    }
+
+    bool production_up(GameState &gamestate, int player) noexcept override;
+    bool defence_up(GameState &gamestate, int player) noexcept override;
+    bool movement_up(GameState &gamestate, int player) noexcept override {
+        assert(false);
+        return false;
+    }
     OilWell(int id, int player, Coord position) noexcept : Generals(id, player, position) {
         mobility_level = 0;
     };
 };
 
 // 主将类，继承自将军基类
-class MainGenerals : public Generals {
+class MainGenerals final: public Generals {
 public:
-    virtual bool production_up(GameState &gamestate, int player) override;
-    virtual bool defence_up(GameState &gamestate, int player) override;
-    virtual bool movement_up(GameState &gamestate, int player) override;
+    int production_upgrade_cost() const noexcept override {
+        for (int i = 0; i < Constant::GENERAL_PRODUCTION_LEVELS; ++i)
+            if (produce_level == Constant::GENERAL_PRODUCTION_VALUES[i])
+                return Constant::GENERAL_PRODUCTION_COST[i] / 2;
+        assert(false);
+        return 0;
+    }
+    int defence_upgrade_cost() const noexcept override {
+        for (int i = 0; i < Constant::GENERAL_DEFENCE_LEVELS; ++i)
+            if (defence_level == Constant::GENERAL_DEFENCE_VALUES[i])
+                return Constant::GENERAL_DEFENCE_COST[i] / 2;
+        assert(false);
+        return 0;
+    }
+    int movement_upgrade_cost() const noexcept override {
+        for (int i = 0; i < Constant::GENERAL_MOVEMENT_LEVELS; ++i)
+            if (mobility_level == Constant::GENERAL_MOVEMENT_VALUES[i])
+                return Constant::GENERAL_MOVEMENT_COST[i] / 2;
+        assert(false);
+        return 0;
+    }
+
+    bool production_up(GameState &gamestate, int player) noexcept override;
+    bool defence_up(GameState &gamestate, int player) noexcept override;
+    bool movement_up(GameState &gamestate, int player) noexcept override;
     MainGenerals(int id, int player, Coord position) noexcept : Generals(id, player, position) {};
 };
 
 // 副将类，继承自将军基类
-class SubGenerals : public Generals {
+class SubGenerals final: public Generals {
 public:
-    virtual bool production_up(GameState &gamestate, int player) override;
-    virtual bool defence_up(GameState &gamestate, int player) override;
-    virtual bool movement_up(GameState &gamestate, int player) override;
+    int production_upgrade_cost() const noexcept override {
+        for (int i = 0; i < Constant::GENERAL_PRODUCTION_LEVELS; ++i)
+            if (produce_level == Constant::GENERAL_PRODUCTION_VALUES[i])
+                return Constant::GENERAL_PRODUCTION_COST[i];
+        assert(false);
+        return 0;
+    }
+    int defence_upgrade_cost() const noexcept override {
+        for (int i = 0; i < Constant::GENERAL_DEFENCE_LEVELS; ++i)
+            if (defence_level == Constant::GENERAL_DEFENCE_VALUES[i])
+                return Constant::GENERAL_DEFENCE_COST[i];
+        assert(false);
+        return 0;
+    }
+    int movement_upgrade_cost() const noexcept override {
+        for (int i = 0; i < Constant::GENERAL_MOVEMENT_LEVELS; ++i)
+            if (mobility_level == Constant::GENERAL_MOVEMENT_VALUES[i])
+                return Constant::GENERAL_MOVEMENT_COST[i];
+        assert(false);
+        return 0;
+    }
+
+    bool production_up(GameState &gamestate, int player) noexcept override;
+    bool defence_up(GameState &gamestate, int player) noexcept override;
+    bool movement_up(GameState &gamestate, int player) noexcept override;
     SubGenerals(int id, int player, Coord position) noexcept : Generals(id, player, position) {};
 };
 
@@ -474,7 +536,7 @@ void GameState::update_round() noexcept {
 
 // ******************* MainGenerals、SubGenerals以及OilWell ********************
 
-bool MainGenerals::production_up(GameState &gamestate, int player) {
+bool MainGenerals::production_up(GameState &gamestate, int player) noexcept {
     for (int i = 0; i < Constant::GENERAL_PRODUCTION_LEVELS; ++i) {
         if (produce_level == Constant::GENERAL_PRODUCTION_VALUES[i]) {
             int cost = Constant::GENERAL_PRODUCTION_COST[i] / Constant::MAIN_GENERAL_DISCOUNT;
@@ -487,7 +549,7 @@ bool MainGenerals::production_up(GameState &gamestate, int player) {
     }
     return false;
 }
-bool MainGenerals::defence_up(GameState &gamestate, int player) {
+bool MainGenerals::defence_up(GameState &gamestate, int player) noexcept {
     for (int i = 0; i < Constant::GENERAL_DEFENCE_LEVELS; ++i) {
         if (defence_level == Constant::GENERAL_DEFENCE_VALUES[i]) {
             int cost = Constant::GENERAL_DEFENCE_COST[i] / Constant::MAIN_GENERAL_DISCOUNT;
@@ -500,7 +562,7 @@ bool MainGenerals::defence_up(GameState &gamestate, int player) {
     }
     return false;
 }
-bool MainGenerals::movement_up(GameState &gamestate, int player) {
+bool MainGenerals::movement_up(GameState &gamestate, int player) noexcept {
     for (int i = 0; i < Constant::GENERAL_MOVEMENT_LEVELS; ++i) {
         if (mobility_level == Constant::GENERAL_MOVEMENT_VALUES[i]) {
             int cost = Constant::GENERAL_MOVEMENT_COST[i] / Constant::MAIN_GENERAL_DISCOUNT;
@@ -514,7 +576,7 @@ bool MainGenerals::movement_up(GameState &gamestate, int player) {
     }
     return false;
 }
-bool SubGenerals::production_up(GameState &gamestate, int player) {
+bool SubGenerals::production_up(GameState &gamestate, int player) noexcept {
     for (int i = 0; i < Constant::GENERAL_PRODUCTION_LEVELS; ++i) {
         if (produce_level == Constant::GENERAL_PRODUCTION_VALUES[i]) {
             if (gamestate.coin[player] < Constant::GENERAL_PRODUCTION_COST[i]) return false;
@@ -526,7 +588,7 @@ bool SubGenerals::production_up(GameState &gamestate, int player) {
     }
     return false;
 }
-bool SubGenerals::defence_up(GameState &gamestate, int player) {
+bool SubGenerals::defence_up(GameState &gamestate, int player) noexcept {
     for (int i = 0; i < Constant::GENERAL_DEFENCE_LEVELS; ++i) {
         if (defence_level == Constant::GENERAL_DEFENCE_VALUES[i]) {
             if (gamestate.coin[player] < Constant::GENERAL_DEFENCE_COST[i]) return false;
@@ -538,7 +600,7 @@ bool SubGenerals::defence_up(GameState &gamestate, int player) {
     }
     return false;
 }
-bool SubGenerals::movement_up(GameState &gamestate, int player) {
+bool SubGenerals::movement_up(GameState &gamestate, int player) noexcept {
     for (int i = 0; i < Constant::GENERAL_MOVEMENT_LEVELS; ++i) {
         if (mobility_level == Constant::GENERAL_MOVEMENT_VALUES[i]) {
             if (gamestate.coin[player] < Constant::GENERAL_MOVEMENT_COST[i]) return false;
@@ -551,7 +613,7 @@ bool SubGenerals::movement_up(GameState &gamestate, int player) {
     }
     return false;
 }
-bool OilWell::production_up(GameState &gamestate, int player) {
+bool OilWell::production_up(GameState &gamestate, int player) noexcept {
     for (int i = 0; i < Constant::OILWELL_PRODUCTION_LEVELS; ++i) {
         if (produce_level == Constant::OILWELL_PRODUCTION_VALUES[i]) {
             if (gamestate.coin[player] < Constant::OILWELL_PRODUCTION_COST[i]) return false;
@@ -563,7 +625,7 @@ bool OilWell::production_up(GameState &gamestate, int player) {
     }
     return false;
 }
-bool OilWell::defence_up(GameState &gamestate, int player) {
+bool OilWell::defence_up(GameState &gamestate, int player) noexcept {
     for (int i = 0; i < Constant::OILWELL_DEFENCE_LEVELS; ++i) {
         if (defence_level == Constant::OILWELL_DEFENCE_VALUES[i]) {
             if (gamestate.coin[player] < Constant::OILWELL_DEFENCE_COST[i]) return false;
