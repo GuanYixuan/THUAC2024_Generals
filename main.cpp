@@ -79,18 +79,47 @@ public:
             return;
         }
 
-        // 随便写点升级
-        int effective_oil = game_state.coin[my_seat];
+        // 简单的无Strike一步杀搜索
         const MainGenerals* main_general = dynamic_cast<const MainGenerals*>(game_state.generals[my_seat]);
-        assert(main_general);
+        const MainGenerals* enemy_general = dynamic_cast<const MainGenerals*>(game_state.generals[1 - my_seat]);
+        assert(main_general && enemy_general);
+        int effective_oil = game_state.coin[my_seat];
+        if (true || effective_oil < Constant::GENERAL_SKILL_COST[SkillType::RUSH]) { // 无Rush
+            if (Dist_map::effect_dist(main_general->position, enemy_general->position, false,
+                game_state.tech_level[my_seat][static_cast<int>(TechType::MOBILITY)]) < 0) {
+                Dist_map dist_map(game_state, enemy_general->position, Path_find_config(1.0, 1e9, false));
+                logger.log(LOG_LEVEL_INFO, "Enemy enter attack range, dist %.0f", dist_map[main_general->position]);
 
+                if (dist_map[main_general->position] <= game_state.tech_level[my_seat][static_cast<int>(TechType::MOBILITY)]) {
+                    std::vector<Coord> path{dist_map.path_to_origin(main_general->position)};
+                    int army_left = -((int)path.size() - 1);
+                    for (const Coord& pos : path)
+                        army_left += game_state.eff_army(pos, my_seat) * (pos == enemy_general->position ? game_state.defence_multiplier(enemy_general->position) : 1);
+
+                    logger.log(LOG_LEVEL_INFO, "Army left %d, path size %d", army_left, path.size()-1);
+                    if (army_left > 0) { // 可攻击
+                        int army_to_move = game_state.eff_army(main_general->position, my_seat);
+                        for (int i = 1, siz = path.size(); i < siz; ++i) {
+                            my_operation_list.push_back(Operation::move_army(path[i - 1], from_coord(path[i - 1], path[i]), army_to_move - 1));
+                            army_to_move += game_state.eff_army(path[i], my_seat) - 1;
+                        }
+                        return;
+                    }
+                }
+            }
+        } else { // 有Rush
+
+        }
+
+        // 随便写点升级
         // 主将产量升级
         if (effective_oil >= oil_savings + main_general->production_upgrade_cost()) {
             my_operation_list.push_back(Operation::upgrade_generals(my_seat, QualityType::PRODUCTION));
             effective_oil -= main_general->production_upgrade_cost();
         }
         // 产量升级完毕后考虑升级防御
-        else if (effective_oil >= oil_savings + main_general->defence_upgrade_cost() && main_general->defence_level < 2) {
+        if (effective_oil >= oil_savings + main_general->defence_upgrade_cost() &&
+            main_general->defence_level < 2 && main_general->produce_level >= Constant::GENERAL_PRODUCTION_VALUES[2]) {
             my_operation_list.push_back(Operation::upgrade_generals(my_seat, QualityType::DEFENCE));
             effective_oil -= main_general->defence_upgrade_cost();
         }
@@ -110,12 +139,22 @@ public:
                     min_dist = std::min(min_dist, dist_map[enemy->position]);
                 }
 
-                if (min_dist > 20) {
+                if (min_dist >= 17) {
                     my_operation_list.push_back(Operation::upgrade_generals(i, QualityType::PRODUCTION));
                     effective_oil -= Constant::OILWELL_PRODUCTION_COST[0];
                     break;
                 }
             }
+        }
+
+        // 足够有钱则升级移动力
+        if (game_state.tech_level[my_seat][static_cast<int>(TechType::MOBILITY)] == Constant::PLAYER_MOVEMENT_VALUES[0] && effective_oil >= oil_savings + Constant::PLAYER_MOVEMENT_COST[0]) {
+            my_operation_list.push_back(Operation::upgrade_tech(TechType::MOBILITY));
+            effective_oil -= Constant::PLAYER_MOVEMENT_COST[0];
+        }
+        if (game_state.tech_level[my_seat][static_cast<int>(TechType::MOBILITY)] == Constant::PLAYER_MOVEMENT_VALUES[1] && effective_oil >= oil_savings + Constant::PLAYER_MOVEMENT_COST[1]) {
+            my_operation_list.push_back(Operation::upgrade_tech(TechType::MOBILITY));
+            effective_oil -= Constant::PLAYER_MOVEMENT_COST[1];
         }
 
         // show_map(game_state, std::cerr);

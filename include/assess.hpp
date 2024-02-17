@@ -48,8 +48,14 @@ public:
     // 计算从`pos`走向`origin`的下一步最佳方向，返回的是`DIRECTION_ARR`中的下标
     Direction direction_to_origin(const Coord& pos) const noexcept;
 
-    // 计算`pos`到某个将领坐标`general_pos`的有效距离，以0为恰好安全
-    static int effect_dist(const Coord& pos, const Coord& general_pos, bool can_rush) noexcept;
+    /**
+     * @brief 计算从`pos`走向`origin`的完整路径，包括`pos`和`origin`本身
+     * @note 本方法断言能够从`pos`走到`origin`
+     */
+    std::vector<Coord> path_to_origin(const Coord& pos) const noexcept;
+
+    // 不考虑地形地计算`pos`到某个将领坐标`general_pos`的有效距离，以0为恰好安全
+    static int effect_dist(const Coord& pos, const Coord& general_pos, bool can_rush, int movement_val = Constant::PLAYER_MOVEMENT_VALUES[0]) noexcept;
 
     // 构造函数，暂且把计算也写在这里
     Dist_map(const GameState& board, const Coord& origin, const Path_find_config& cfg) noexcept;
@@ -120,7 +126,7 @@ Direction Dist_map::direction_to_origin(const Coord& pos) const noexcept {
         if (!next_pos.in_map()) continue;
         if (cfg.general_path && next_pos != origin && board[next_pos].generals != nullptr) continue;
 
-        double next_dist = dist[next_pos.x][next_pos.y] + board[next_pos].army * 0.01 * ((board[next_pos].player != my_seat) ? 1 : -1);
+        double next_dist = dist[next_pos.x][next_pos.y] + board[next_pos].army * 1e-6 * ((board[next_pos].player != my_seat) ? 1 : -1);
         if (next_dist < min_dist) {
             min_dist = next_dist;
             min_dir = i;
@@ -129,16 +135,34 @@ Direction Dist_map::direction_to_origin(const Coord& pos) const noexcept {
     assert(min_dist <= Constant::col * Constant::row);
     return static_cast<Direction>(min_dir);
 }
+std::vector<Coord> Dist_map::path_to_origin(const Coord& pos) const noexcept {
+    assert(pos.in_map());
+    assert(dist[pos.x][pos.y] <= MAX_DIST);
 
-int Dist_map::effect_dist(const Coord& pos, const Coord& general_pos, bool can_rush) noexcept {
+    std::vector<Coord> path{pos};
+    for (Coord curr_pos = pos; curr_pos != origin; ) {
+        Direction dir = direction_to_origin(curr_pos);
+        curr_pos += DIRECTION_ARR[dir];
+        path.push_back(curr_pos);
+
+        if (path.size() >= Constant::col * Constant::row) {
+            logger.log(LOG_LEVEL_ERROR, "path_to_origin: path too long");
+            for (const Coord& coord : path) logger.log(LOG_LEVEL_ERROR, "\t%s", coord.str().c_str());
+            assert(false);
+        }
+    }
+    return path;
+}
+
+int Dist_map::effect_dist(const Coord& pos, const Coord& general_pos, bool can_rush, int movement_val) noexcept {
     assert(pos.in_map() && general_pos.in_map());
 
     // 若不考虑技能，则默认行动力为2格
-    if (!can_rush) return pos.dist_to(general_pos) - Constant::PLAYER_MOVEMENT_VALUES[0] - 1;
+    if (!can_rush) return pos.dist_to(general_pos) - movement_val - 1;
 
     // 考虑技能
     int dx = std::max(std::abs(pos.x - general_pos.x) - Constant::GENERAL_ATTACK_RADIUS, 0);
     int dy = std::max(std::abs(pos.y - general_pos.y) - Constant::GENERAL_ATTACK_RADIUS, 0);
-    if (dx == 0 && dy == 0) return std::min(std::abs(pos.x - general_pos.x), std::abs(pos.y - general_pos.y)) - Constant::PLAYER_MOVEMENT_VALUES[0] - 3;
-    return dx + dy - Constant::PLAYER_MOVEMENT_VALUES[0] - 1;
+    if (dx == 0 && dy == 0) return std::min(std::abs(pos.x - general_pos.x), std::abs(pos.y - general_pos.y)) - movement_val - 3;
+    return dx + dy - movement_val - 1;
 }

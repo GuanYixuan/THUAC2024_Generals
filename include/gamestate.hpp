@@ -8,7 +8,9 @@
 #include <algorithm>
 #include "constant.hpp"
 
-#define M_PI (3.14159265358979323846)
+#ifndef M_PI
+    #define M_PI (3.14159265358979323846)
+#endif
 
 // 坐标类
 class Coord {
@@ -27,6 +29,8 @@ public:
     constexpr bool operator!=(const Coord& other) const noexcept { return x != other.x || y != other.y; }
     constexpr Coord operator+(const Coord& other) const noexcept { return Coord(x + other.x, y + other.y); }
     constexpr Coord operator-(const Coord& other) const noexcept { return Coord(x - other.x, y - other.y); }
+    constexpr Coord& operator+=(const Coord& other) noexcept { x += other.x; y += other.y; return *this; }
+    constexpr Coord& operator-=(const Coord& other) noexcept { x -= other.x; y -= other.y; return *this; }
     constexpr int operator*(const Coord& other) const noexcept { return x * other.x + y * other.y; }
 
     // 获取描述字符串
