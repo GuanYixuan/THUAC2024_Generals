@@ -67,6 +67,8 @@ public:
 
     std::optional<Oil_cluster> cluster;
 
+    int oil_savings = 15;
+
     void main_process() {
         // 初始操作
         if (game_state.round == 1) {
@@ -75,6 +77,45 @@ public:
             std::vector<Oil_cluster> clusters{identify_oil_clusters()};
             if (!clusters.empty()) cluster = clusters[0];
             return;
+        }
+
+        // 随便写点升级
+        int effective_oil = game_state.coin[my_seat];
+        const MainGenerals* main_general = dynamic_cast<const MainGenerals*>(game_state.generals[my_seat]);
+        assert(main_general);
+
+        // 主将产量升级
+        if (effective_oil >= oil_savings + main_general->production_upgrade_cost()) {
+            my_operation_list.push_back(Operation::upgrade_generals(my_seat, QualityType::PRODUCTION));
+            effective_oil -= main_general->production_upgrade_cost();
+        }
+        // 产量升级完毕后考虑升级防御
+        else if (effective_oil >= oil_savings + main_general->defence_upgrade_cost() && main_general->defence_level < 2) {
+            my_operation_list.push_back(Operation::upgrade_generals(my_seat, QualityType::DEFENCE));
+            effective_oil -= main_general->defence_upgrade_cost();
+        }
+
+        // 升级距离敌方足够远的油井
+        if (effective_oil >= oil_savings + 25 + Constant::OILWELL_PRODUCTION_COST[0]) {
+            for (int i = 0, siz = game_state.generals.size(); i < siz; ++i) {
+                const OilWell* well = dynamic_cast<const OilWell*>(game_state.generals[i]);
+                if (well == nullptr || well->player != my_seat) continue;
+                if (well->produce_level > Constant::OILWELL_PRODUCTION_VALUES[0]) continue;
+
+                Dist_map dist_map(game_state, well->position, {});
+                double min_dist = std::numeric_limits<double>::max();
+                for (int j = 0; j < siz; ++j) {
+                    const Generals* enemy = game_state.generals[j];
+                    if (dynamic_cast<const OilWell*>(enemy) || enemy->player != 1 - my_seat) continue;
+                    min_dist = std::min(min_dist, dist_map[enemy->position]);
+                }
+
+                if (min_dist > 20) {
+                    my_operation_list.push_back(Operation::upgrade_generals(i, QualityType::PRODUCTION));
+                    effective_oil -= Constant::OILWELL_PRODUCTION_COST[0];
+                    break;
+                }
+            }
         }
 
         // show_map(game_state, std::cerr);
