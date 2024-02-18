@@ -71,15 +71,33 @@ private:
     };
 };
 
-// “投送兵力数”计算
-class Projection_assess {
-public:
-    Projection_assess(const GameState& state) noexcept : state(state) {}
+// 单将一步杀的不同类型
+struct Critical_tactic {
+    int required_oil;
 
-private:
-    const GameState& state;
+    bool can_rush;
+    bool can_strike;
+    bool can_command;
+
+    std::string str() const noexcept {
+        std::string ret(wrap("Tactic requiring oil %d", required_oil));
+        if (can_rush) ret += ", can rush";
+        if (can_strike) ret += ", can strike";
+        if (can_command) ret += ", can command";
+        return ret;
+    }
 };
-
+// 固定的几种连招，按`required_oil`排序
+constexpr Critical_tactic CRITICAL_TACTICS[] = {
+    {0, false, false, false},
+    {Constant::GENERAL_SKILL_COST[SkillType::STRIKE], false, true, false},
+    {Constant::GENERAL_SKILL_COST[SkillType::RUSH], true, false, false},
+    {Constant::GENERAL_SKILL_COST[SkillType::COMMAND], false, false, true},
+    {Constant::GENERAL_SKILL_COST[SkillType::STRIKE] + Constant::GENERAL_SKILL_COST[SkillType::RUSH], true, true, false},
+    {Constant::GENERAL_SKILL_COST[SkillType::STRIKE] + Constant::GENERAL_SKILL_COST[SkillType::COMMAND], false, true, true},
+    {Constant::GENERAL_SKILL_COST[SkillType::RUSH] + Constant::GENERAL_SKILL_COST[SkillType::COMMAND], true, false, true},
+    {Constant::GENERAL_SKILL_COST[SkillType::STRIKE] + Constant::GENERAL_SKILL_COST[SkillType::RUSH] + Constant::GENERAL_SKILL_COST[SkillType::COMMAND], true, true, true},
+};
 
 // ******************** 寻路部分实现 ********************
 

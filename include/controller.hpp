@@ -9,6 +9,7 @@
 #include "util.hpp"
 #include "logger.hpp"
 
+#include "test_sync.hpp"
 
 // 标识玩家的先后手：0先手，1后手
 int my_seat = 0;
@@ -51,7 +52,10 @@ public:
             bool valid = execute_single_command(1 - my_seat, op);
             logger.log(LOG_LEVEL_INFO, "Enemy op: %s", op.str().c_str());
 
-            if (!valid) throw std::runtime_error("Invalid enemy operation: " + op.str());
+            if (!valid) {
+                show_map(game_state, std::cerr);
+                throw std::runtime_error("Invalid enemy operation: " + op.str());
+            }
         }
     }
     /**

@@ -1,5 +1,4 @@
 #include "include/controller.hpp"
-#include "include/test_sync.hpp"
 
 #include "include/assess.hpp"
 #include "include/logger.hpp"
@@ -67,7 +66,7 @@ public:
 
     std::optional<Oil_cluster> cluster;
 
-    int oil_savings = 15;
+    int oil_savings = 20;
 
     void main_process() {
         // 初始操作
@@ -309,9 +308,6 @@ private:
         if (cluster) for (const OilWell* well : cluster->wells)
             if (game_state[well->position].player != my_seat) cluster_occupied = false;
 
-        bool can_rush = (game_state.coin[1 - my_seat] >= Constant::GENERAL_SKILL_COST[SkillType::RUSH]);
-        bool can_strike = (game_state.coin[1 - my_seat] >= Constant::GENERAL_SKILL_COST[SkillType::STRIKE]);
-        bool can_strike_rush = (game_state.coin[1 - my_seat] >= Constant::GENERAL_SKILL_COST[SkillType::RUSH] + Constant::GENERAL_SKILL_COST[SkillType::STRIKE]);
         for (int i = 0, siz = game_state.generals.size(); i < siz; ++i) {
             const Generals* general = game_state.generals[i];
             // 暂时只给主将分配策略
@@ -328,18 +324,17 @@ private:
                 int enemy_army = game_state[enemy->position].army;
                 if (enemy->player != 1 - my_seat || dynamic_cast<const OilWell*>(enemy) != nullptr) continue;
 
-                // 直接攻击
-                if (enemy_army > curr_army * defence_mult) {
-                    int effect_dist = Dist_map::effect_dist(general->position, enemy->position, can_rush);
+                for (const Critical_tactic& tactic : CRITICAL_TACTICS) {
+                    if (game_state.coin[1 - my_seat] < tactic.required_oil) break;
+
+                    // 初步计算能否攻下（不计路程补充/损耗）
+                    double attack_multiplier = tactic.can_command ? Constant::GENERAL_SKILL_EFFECT[SkillType::COMMAND] : 1.0;
+                    if (enemy_army * attack_multiplier <= std::max(0, curr_army - (tactic.can_strike ? Constant::STRIKE_DAMAGE : 0)) * defence_mult) continue;
+
+                    int effect_dist = Dist_map::effect_dist(general->position, enemy->position, tactic.can_rush,
+                                                            game_state.tech_level[1-my_seat][static_cast<int>(TechType::MOBILITY)]);
                     if (effect_dist < min_effect_dist) {
-                        min_effect_dist = effect_dist;
-                        nearest_enemy = enemy;
-                    }
-                }
-                // 空袭+攻击
-                else if (can_strike && enemy_army > std::max(0, curr_army - Constant::STRIKE_DAMAGE) * defence_mult) {
-                    int effect_dist = Dist_map::effect_dist(general->position, enemy->position, can_strike_rush);
-                    if (effect_dist < min_effect_dist) {
+                        if (effect_dist < 0) logger.log(LOG_LEVEL_INFO, "General %s threaten by [%s], eff dist %d", general->position.str().c_str(), tactic.str().c_str(), effect_dist);
                         min_effect_dist = effect_dist;
                         nearest_enemy = enemy;
                     }
