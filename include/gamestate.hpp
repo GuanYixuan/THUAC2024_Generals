@@ -380,6 +380,15 @@ public:
         return -cell.army;
     }
 
+    int calc_oil_production(int player) const noexcept {
+        int ret = 0;
+        for (const Generals* gen : generals) {
+            if (dynamic_cast<const OilWell*>(gen) == nullptr || gen->player != player) continue;
+            ret += gen->produce_level;
+        }
+        return ret;
+    }
+
     // 寻找将军id对应的格子，找不到返回`(-1,-1)`
     Coord find_general_position_by_id(int general_id) const noexcept {
         for (const Generals* gen : generals) if (gen->id == general_id) return gen->position;
@@ -476,6 +485,10 @@ double GameState::defence_multiplier(const Coord& pos, int player) const noexcep
     return defence;
 }
 void GameState::update_round() noexcept {
+    // 似乎要先每10回合增兵
+    if (round % 10 == 0) for (int i = 0; i < Constant::row; ++i) for (int j = 0; j < Constant::col; ++j)
+        if (board[i][j].player != -1) board[i][j].army += 1;
+
     for (int i = 0; i < Constant::row; ++i) {
         for (int j = 0; j < Constant::col; ++j) {
             Cell& cell = this->board[i][j];
@@ -487,7 +500,7 @@ void GameState::update_round() noexcept {
             else if (dynamic_cast<SubGenerals*>(general) && general->is_occupied()) cell.army += general->produce_level;
             else if (dynamic_cast<OilWell*>(general) && general->is_occupied()) coin[general->player] += general->produce_level;
 
-            // 流沙减兵
+            // 10回合增兵后再流沙减兵
             if (cell.type == CellType::DESERT && cell.player != -1 && cell.army > 0) {
                 if (this->tech_level[cell.player][static_cast<int>(TechType::IMMUNE_SAND)] == 0) {
                     cell.army -= 1;
@@ -496,9 +509,6 @@ void GameState::update_round() noexcept {
             }
         }
     }
-    // 每10回合增兵
-    if (round % 10 == 0) for (int i = 0; i < Constant::row; ++i) for (int j = 0; j < Constant::col; ++j)
-        if (board[i][j].player != -1) board[i][j].army += 1;
 
     // 超级武器判定
     for (auto &weapon : this->active_super_weapon) {
