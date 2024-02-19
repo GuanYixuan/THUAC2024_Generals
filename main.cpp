@@ -222,26 +222,26 @@ public:
             // 先手
             if (my_seat == 0) {
                 // 给出操作
-                logger.round = game_state.round;
                 main_process();
                 // 向judger发送操作
                 finish_and_send_our_ops();
                 // 读取并应用敌方操作
                 read_and_apply_enemy_ops();
-                //更新回合
+                // 更新回合
                 game_state.update_round();
+                logger.round = game_state.round;
             }
             // 后手
             else {
                 // 读取并应用敌方操作
                 read_and_apply_enemy_ops();
                 // 给出操作
-                logger.round = game_state.round;
                 main_process();
                 // 向judger发送操作
                 finish_and_send_our_ops();
-                //更新回合
+                // 更新回合
                 game_state.update_round();
+                logger.round = game_state.round;
             }
         }
     }
@@ -315,6 +315,7 @@ private:
 
             int curr_army = game_state[general->position].army;
             double defence_mult = game_state.defence_multiplier(general->position);
+            int enemy_lookahead_oil = game_state.coin[1 - my_seat] + game_state.calc_oil_production(1 - my_seat) * 2; // 取两回合后的油量
 
             // 考虑是否在危险范围内
             int min_effect_dist = 1e8;
@@ -325,11 +326,14 @@ private:
                 if (enemy->player != 1 - my_seat || dynamic_cast<const OilWell*>(enemy) != nullptr) continue;
 
                 for (const Critical_tactic& tactic : CRITICAL_TACTICS) {
-                    if (game_state.coin[1 - my_seat] < tactic.required_oil) break;
+                    if (enemy_lookahead_oil < tactic.required_oil) break;
 
                     // 初步计算能否攻下（不计路程补充/损耗）
                     double attack_multiplier = tactic.can_command ? Constant::GENERAL_SKILL_EFFECT[SkillType::COMMAND] : 1.0;
-                    if (enemy_army * attack_multiplier <= std::max(0, curr_army - (tactic.can_strike ? Constant::STRIKE_DAMAGE : 0)) * defence_mult) continue;
+                    attack_multiplier *= tactic.can_command_and_weaken ? (1/Constant::GENERAL_SKILL_EFFECT[SkillType::WEAKEN]) : 1.0;
+                    int effective_army = std::max(0, curr_army - (tactic.can_strike ? Constant::STRIKE_DAMAGE : 0));
+                    if ((enemy_army * attack_multiplier <= effective_army * defence_mult) &&
+                        (enemy_army + enemy->produce_level) * attack_multiplier <= (effective_army + general->produce_level) * defence_mult) continue; // 1回合 lookahead
 
                     int effect_dist = Dist_map::effect_dist(general->position, enemy->position, tactic.can_rush,
                                                             game_state.tech_level[1-my_seat][static_cast<int>(TechType::MOBILITY)]);

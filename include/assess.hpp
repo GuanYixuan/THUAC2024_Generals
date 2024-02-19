@@ -78,25 +78,31 @@ struct Critical_tactic {
     bool can_rush;
     bool can_strike;
     bool can_command;
+    bool can_command_and_weaken;
 
     std::string str() const noexcept {
         std::string ret(wrap("Tactic requiring oil %d", required_oil));
         if (can_rush) ret += ", can rush";
         if (can_strike) ret += ", can strike";
         if (can_command) ret += ", can command";
+        if (can_command_and_weaken) ret += " + weaken";
         return ret;
     }
 };
 // 固定的几种连招，按`required_oil`排序
 constexpr Critical_tactic CRITICAL_TACTICS[] = {
-    {0, false, false, false},
-    {Constant::GENERAL_SKILL_COST[SkillType::STRIKE], false, true, false},
-    {Constant::GENERAL_SKILL_COST[SkillType::RUSH], true, false, false},
-    {Constant::GENERAL_SKILL_COST[SkillType::COMMAND], false, false, true},
-    {Constant::GENERAL_SKILL_COST[SkillType::STRIKE] + Constant::GENERAL_SKILL_COST[SkillType::RUSH], true, true, false},
-    {Constant::GENERAL_SKILL_COST[SkillType::STRIKE] + Constant::GENERAL_SKILL_COST[SkillType::COMMAND], false, true, true},
-    {Constant::GENERAL_SKILL_COST[SkillType::RUSH] + Constant::GENERAL_SKILL_COST[SkillType::COMMAND], true, false, true},
-    {Constant::GENERAL_SKILL_COST[SkillType::STRIKE] + Constant::GENERAL_SKILL_COST[SkillType::RUSH] + Constant::GENERAL_SKILL_COST[SkillType::COMMAND], true, true, true},
+    {0, false, false, false, false},
+    {Constant::GENERAL_SKILL_COST[SkillType::STRIKE], false, true, false, false},
+    {Constant::GENERAL_SKILL_COST[SkillType::RUSH], true, false, false, false},
+    {Constant::GENERAL_SKILL_COST[SkillType::COMMAND], false, false, true, false},
+    {Constant::GENERAL_SKILL_COST[SkillType::STRIKE] + Constant::GENERAL_SKILL_COST[SkillType::RUSH], true, true, false, false},
+    {Constant::GENERAL_SKILL_COST[SkillType::STRIKE] + Constant::GENERAL_SKILL_COST[SkillType::COMMAND], false, true, true, false},
+    {Constant::GENERAL_SKILL_COST[SkillType::RUSH] + Constant::GENERAL_SKILL_COST[SkillType::COMMAND], true, false, true, false},
+    {Constant::GENERAL_SKILL_COST[SkillType::COMMAND] + Constant::GENERAL_SKILL_COST[SkillType::WEAKEN], false, false, true, true},
+    {Constant::GENERAL_SKILL_COST[SkillType::STRIKE] + Constant::GENERAL_SKILL_COST[SkillType::RUSH] + Constant::GENERAL_SKILL_COST[SkillType::COMMAND], true, true, true, false},
+    {Constant::GENERAL_SKILL_COST[SkillType::STRIKE] + Constant::GENERAL_SKILL_COST[SkillType::COMMAND] + Constant::GENERAL_SKILL_COST[SkillType::WEAKEN], false, true, true, true},
+    {Constant::GENERAL_SKILL_COST[SkillType::RUSH] + Constant::GENERAL_SKILL_COST[SkillType::COMMAND] + Constant::GENERAL_SKILL_COST[SkillType::WEAKEN], true, false, true, true},
+    {Constant::GENERAL_SKILL_COST[SkillType::STRIKE] + Constant::GENERAL_SKILL_COST[SkillType::RUSH] + Constant::GENERAL_SKILL_COST[SkillType::COMMAND] + Constant::GENERAL_SKILL_COST[SkillType::WEAKEN], true, true, true, true},
 };
 
 // ******************** 寻路部分实现 ********************
@@ -175,7 +181,7 @@ std::vector<Coord> Dist_map::path_to_origin(const Coord& pos) const noexcept {
 int Dist_map::effect_dist(const Coord& pos, const Coord& general_pos, bool can_rush, int movement_val) noexcept {
     assert(pos.in_map() && general_pos.in_map());
 
-    // 若不考虑技能，则默认行动力为2格
+    // 若不考虑技能，则行动力为movement_val
     if (!can_rush) return pos.dist_to(general_pos) - movement_val - 1;
 
     // 考虑技能
