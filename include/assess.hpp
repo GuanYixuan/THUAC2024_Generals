@@ -19,8 +19,11 @@ struct Path_find_config {
     // 是否只搜索将领可通过的路径
     bool general_path;
 
-    Path_find_config(double desert_dist = 2, double swamp_dist = 1e9, bool general_path = true) noexcept :
-        desert_dist(desert_dist), swamp_dist(swamp_dist), general_path(general_path) {}
+    // 最大搜索距离
+    double max_dist;
+
+    Path_find_config(double desert_dist = 2, double swamp_dist = 1e9, bool general_path = true, double max_dist = 1e9) noexcept :
+        desert_dist(desert_dist), swamp_dist(swamp_dist), general_path(general_path), max_dist(max_dist) {}
 
 };
 
@@ -122,6 +125,7 @@ Dist_map::Dist_map(const GameState& board, const Coord& origin, const Path_find_
         const Coord& curr_pos = node.coord;
         queue.pop();
 
+        if (node.dist > cfg.max_dist) break;
         if (vis[curr_pos.x][curr_pos.y]) continue;
         vis[curr_pos.x][curr_pos.y] = true;
         dist[curr_pos.x][curr_pos.y] = node.dist;

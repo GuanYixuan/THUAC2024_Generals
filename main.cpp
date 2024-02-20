@@ -41,13 +41,33 @@ enum class General_strategy_type {
     OCCUPY
 };
 
+struct Danger {
+    int eff_dist;
+    const Generals* enemy;
+    const Critical_tactic* tactic;
+
+    Danger(int eff_dist, const Generals* enemy, const Critical_tactic* tactic) noexcept : eff_dist(eff_dist), enemy(enemy), tactic(tactic) {}
+
+    bool operator>(const Danger& other) const noexcept {
+        if (eff_dist != other.eff_dist) return eff_dist < other.eff_dist;
+        return tactic->required_oil < other.tactic->required_oil;
+    }
+};
+
 class Strategy_target {
 public:
     Coord coord;
     const Generals* general;
+    std::optional<Danger> danger;
 
+    // 构造函数：占领
     Strategy_target(const Coord& coord) noexcept : coord(coord), general(nullptr) {}
+    // 构造函数：进攻
     Strategy_target(const Generals* general) noexcept : coord(general->position), general(general) {}
+    // 构造函数：防御
+    Strategy_target(const Coord& coord, const Danger& danger) noexcept : coord(coord), general(danger.enemy), danger(danger) {}
+    // 构造函数：撤退
+    Strategy_target(const Danger& danger) noexcept : coord(danger.enemy->position), general(danger.enemy), danger(danger) {}
 };
 
 class General_strategy {
@@ -159,28 +179,49 @@ public:
         // show_map(game_state, std::cerr);
         update_strategy();
 
-        bool can_rush = (game_state.coin[1 - my_seat] >= Constant::GENERAL_SKILL_COST[SkillType::RUSH]);
         for (const General_strategy& strategy : strategies) {
             const Generals* general = game_state.generals[strategy.general_id];
             int curr_army = game_state[general->position].army;
 
             if (strategy.type == General_strategy_type::DEFEND) {
+                const Coord& target = strategy.target.coord;
+                Dist_map dist_map(game_state, target, {});
+                Direction dir = dist_map.direction_to_origin(general->position);
+                Coord next_pos = general->position + DIRECTION_ARR[dir];
+                const Cell& next_cell = game_state[next_pos];
 
+                const Generals* enemy = strategy.target.general;
+                const Critical_tactic* tactic = strategy.target.danger->tactic;
+
+                if (Dist_map::effect_dist(next_pos, enemy->position, tactic->can_rush,
+                    game_state.tech_level[1-my_seat][static_cast<int>(TechType::MOBILITY)]) < 0) continue; // 不踏入危险区
+
+                logger.log(LOG_LEVEL_DEBUG, "General at %s(%d) -> %s(%d)", general->position.str().c_str(), curr_army, next_pos.str().c_str(), next_cell.army);
+                if (next_pos == target) {
+                    if (curr_army - 1 > next_cell.army)
+                        my_operation_list.push_back(Operation::move_army(general->position, dir, next_cell.army + 1));
+                } else {
+                    if (curr_army > 1 && (curr_army - 1 > (next_cell.player == my_seat ? 0 : next_cell.army))) {
+                        my_operation_list.push_back(Operation::move_army(general->position, dir, curr_army - 1));
+                        my_operation_list.push_back(Operation::move_generals(strategy.general_id, next_pos));
+                    }
+                }
             } else if (strategy.type == General_strategy_type::ATTACK) {
 
             } else if (strategy.type == General_strategy_type::RETREAT) {
                 logger.log(LOG_LEVEL_INFO, "General %d retreating", strategy.general_id);
                 const Generals* enemy = strategy.target.general;
+                const Critical_tactic* tactic = strategy.target.danger->tactic;
 
                 // 寻找能走到的最大有效距离
                 Coord best_pos{-1, -1};
-                int max_eff_dist = Dist_map::effect_dist(general->position, enemy->position, can_rush);
+                int max_eff_dist = Dist_map::effect_dist(general->position, enemy->position, tactic->can_rush);
                 for (int dir = 0; dir < DIRECTION_COUNT; ++dir) {
                     Coord next_pos = general->position + DIRECTION_ARR[dir];
                     if (!next_pos.in_map() || !game_state.can_general_step_on(next_pos, my_seat)) continue;
                     if (curr_army - 1 <= -game_state.eff_army(next_pos, my_seat)) continue;
 
-                    int eff_dist = Dist_map::effect_dist(next_pos, enemy->position, can_rush);
+                    int eff_dist = Dist_map::effect_dist(next_pos, enemy->position, tactic->can_rush);
                     logger.log(LOG_LEVEL_DEBUG, "Next pos %s, eff dist %d", next_pos.str().c_str(), eff_dist);
                     if (eff_dist > max_eff_dist) {
                         best_pos = next_pos;
@@ -318,8 +359,7 @@ private:
             int enemy_lookahead_oil = game_state.coin[1 - my_seat] + game_state.calc_oil_production(1 - my_seat) * 2; // 取两回合后的油量
 
             // 考虑是否在危险范围内
-            int min_effect_dist = 1e8;
-            const Generals* nearest_enemy = nullptr;
+            Danger most_danger{100000, nullptr, &CRITICAL_TACTICS[0]};
             for (int j = 0; j < siz; ++j) {
                 const Generals* enemy = game_state.generals[j];
                 int enemy_army = game_state[enemy->position].army;
@@ -337,30 +377,32 @@ private:
 
                     int effect_dist = Dist_map::effect_dist(general->position, enemy->position, tactic.can_rush,
                                                             game_state.tech_level[1-my_seat][static_cast<int>(TechType::MOBILITY)]);
-                    if (effect_dist < min_effect_dist) {
-                        if (effect_dist < 0) logger.log(LOG_LEVEL_INFO, "General %s threaten by [%s], eff dist %d", general->position.str().c_str(), tactic.str().c_str(), effect_dist);
-                        min_effect_dist = effect_dist;
-                        nearest_enemy = enemy;
+                    Danger new_danger{effect_dist, enemy, &tactic};
+                    if (new_danger > most_danger) {
+                        most_danger = new_danger;
+                        if (effect_dist < 0)
+                            logger.log(LOG_LEVEL_INFO, "General %s threaten by [%s], eff dist %d", general->position.str().c_str(), tactic.str().c_str(), effect_dist);
                     }
                 }
             }
             // 在范围内则撤退
-            if (min_effect_dist < 0) {
-                strategies.emplace_back(General_strategy{i, General_strategy_type::RETREAT, Strategy_target(nearest_enemy)});
-                logger.log(LOG_LEVEL_INFO, "General %s retreat %s, eff dist %d", general->position.str().c_str(), nearest_enemy->position.str().c_str(), min_effect_dist);
+            if (most_danger.eff_dist < 0) {
+                strategies.emplace_back(General_strategy{i, General_strategy_type::RETREAT, Strategy_target(most_danger)});
+                logger.log(LOG_LEVEL_INFO, "General %s retreat %s, eff dist %d", general->position.str().c_str(), most_danger.enemy->position.str().c_str(), most_danger.eff_dist);
                 continue;
             }
             // 在边缘处则考虑相持
-            else if (min_effect_dist == 0) {
+            else if (most_danger.eff_dist == 0) {
                 bool found = false;
                 // 选择在自己前方的油田
                 Dist_map dist_map(game_state, general->position, {});
                 for (int j = 0; j < siz; ++j) {
                     const OilWell* oil_well = dynamic_cast<const OilWell*>(game_state.generals[j]);
                     if (oil_well == nullptr || oil_well->player == my_seat) continue;
-                    if (dist_map[oil_well->position] <= 4 && (oil_well->position - general->position).angle_to(nearest_enemy->position - general->position) <= M_PI / 2) {
-                        strategies.emplace_back(General_strategy{i, General_strategy_type::DEFEND, Strategy_target{oil_well->position}});
-                        logger.log(LOG_LEVEL_INFO, "General %s try to occupy oil well %s", general->position.str().c_str(), oil_well->position.str().c_str());
+                    if (dist_map[oil_well->position] <= 4 && (oil_well->position - general->position).angle_to(most_danger.enemy->position - general->position) <= M_PI / 2) {
+                        strategies.emplace_back(General_strategy{i, General_strategy_type::DEFEND, Strategy_target(oil_well->position, most_danger)});
+                        logger.log(LOG_LEVEL_INFO, "General %s try to occupy oil well %s under [%s]",
+                                   general->position.str().c_str(), oil_well->position.str().c_str(), most_danger.tactic->str().c_str());
                         found = true;
                         break;
                     }
@@ -375,8 +417,9 @@ private:
                     if (best_well == nullptr || dist_map[oil_well->position] < dist_map[best_well->position]) best_well = oil_well;
                 }
                 if (best_well) {
-                    strategies.emplace_back(General_strategy{i, General_strategy_type::DEFEND, Strategy_target{best_well->position}});
-                    logger.log(LOG_LEVEL_INFO, "General %s defend oil well %s", general->position.str().c_str(), best_well->position.str().c_str());
+                    strategies.emplace_back(General_strategy{i, General_strategy_type::DEFEND, Strategy_target(best_well->position, most_danger)});
+                    logger.log(LOG_LEVEL_INFO, "General %s defend oil well %s under [%s]",
+                               general->position.str().c_str(), best_well->position.str().c_str(), most_danger.tactic->str().c_str());
                 } else logger.log(LOG_LEVEL_INFO, "General %s has no target to defend", general->position.str().c_str());
                 continue;
             }
