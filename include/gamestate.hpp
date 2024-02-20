@@ -380,6 +380,9 @@ public:
         return -cell.army;
     }
 
+    // 获取指定玩家的行动力
+    int get_mobility(int player) const noexcept { return tech_level[player][static_cast<int>(TechType::MOBILITY)]; }
+    // 计算指定玩家每回合的石油产量
     int calc_oil_production(int player) const noexcept {
         int ret = 0;
         for (const Generals* gen : generals) {
