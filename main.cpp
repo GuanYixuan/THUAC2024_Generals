@@ -5,6 +5,7 @@
 
 #include <cmath>
 #include <queue>
+#include <cstdlib>
 #include <optional>
 
 class Oil_cluster {
@@ -99,35 +100,74 @@ public:
         }
 
         // 简单的无Strike一步杀搜索
+        int my_mobility = game_state.tech_level[my_seat][static_cast<int>(TechType::MOBILITY)];
         const MainGenerals* main_general = dynamic_cast<const MainGenerals*>(game_state.generals[my_seat]);
         const MainGenerals* enemy_general = dynamic_cast<const MainGenerals*>(game_state.generals[1 - my_seat]);
         assert(main_general && enemy_general);
         int effective_oil = game_state.coin[my_seat];
-        if (true || effective_oil < Constant::GENERAL_SKILL_COST[SkillType::RUSH]) { // 无Rush
-            if (Dist_map::effect_dist(main_general->position, enemy_general->position, false,
-                game_state.tech_level[my_seat][static_cast<int>(TechType::MOBILITY)]) < 0) {
-                Dist_map dist_map(game_state, enemy_general->position, Path_find_config(1.0, 1e9, false));
-                logger.log(LOG_LEVEL_INFO, "Enemy enter attack range, dist %.0f", dist_map[main_general->position]);
+        // 无Rush
+        if (Dist_map::effect_dist(main_general->position, enemy_general->position, false, my_mobility) < 0) {
+            Dist_map dist_map(game_state, enemy_general->position, Path_find_config(1.0, 1e9, false, my_mobility));
+            logger.log(LOG_LEVEL_INFO, "Enemy enter attack range, dist %.0f", dist_map[main_general->position]);
 
-                if (dist_map[main_general->position] <= game_state.tech_level[my_seat][static_cast<int>(TechType::MOBILITY)]) {
-                    std::vector<Coord> path{dist_map.path_to_origin(main_general->position)};
-                    int army_left = -((int)path.size() - 1);
-                    for (const Coord& pos : path)
-                        army_left += game_state.eff_army(pos, my_seat) * (pos == enemy_general->position ? game_state.defence_multiplier(enemy_general->position) : 1);
+            // 处理沼泽尚有bug
+            if (dist_map[main_general->position] <= my_mobility) {
+                std::vector<Coord> path{dist_map.path_to_origin(main_general->position)};
+                int army_left = -((int)path.size() - 1);
+                for (const Coord& pos : path)
+                    army_left += game_state.eff_army(pos, my_seat) * (pos == enemy_general->position ? game_state.defence_multiplier(enemy_general->position) : 1);
 
-                    logger.log(LOG_LEVEL_INFO, "Army left %d, path size %d", army_left, path.size()-1);
-                    if (army_left > 0) { // 可攻击
-                        int army_to_move = game_state.eff_army(main_general->position, my_seat);
-                        for (int i = 1, siz = path.size(); i < siz; ++i) {
-                            my_operation_list.push_back(Operation::move_army(path[i - 1], from_coord(path[i - 1], path[i]), army_to_move - 1));
-                            army_to_move += game_state.eff_army(path[i], my_seat) - 1;
-                        }
-                        return;
+                logger.log(LOG_LEVEL_INFO, "Army left %d, path size %d", army_left, path.size()-1);
+                if (army_left > 0) { // 可攻击
+                    int army_to_move = game_state.eff_army(main_general->position, my_seat);
+                    for (int i = 1, siz = path.size(); i < siz; ++i) {
+                        my_operation_list.push_back(Operation::move_army(path[i - 1], from_coord(path[i - 1], path[i]), army_to_move - 1));
+                        army_to_move += game_state.eff_army(path[i], my_seat) - 1;
                     }
+                    return;
                 }
             }
-        } else { // 有Rush
+        }
+        // 以二分之一概率触发
+        bool trigger = (rand() % 2 == 0);
+        if (effective_oil >= Constant::GENERAL_SKILL_COST[static_cast<int>(SkillType::RUSH)]) { // 有Rush
+            if (Dist_map::effect_dist(main_general->position, enemy_general->position, true, my_mobility) < 0) {
 
+                Dist_map dist_map(game_state, enemy_general->position, Path_find_config(1.0, 1e9, false));
+                logger.log(LOG_LEVEL_INFO, "Enemy enter attack range (rush), dist %.0f", dist_map[main_general->position]);
+
+                // 寻找可行落地点
+                if (dist_map[main_general->position] > my_mobility)
+                for (int x = std::max(main_general->position.x - Constant::GENERAL_ATTACK_RADIUS, 0); x <= std::min(main_general->position.x + Constant::GENERAL_ATTACK_RADIUS, Constant::col - 1); ++x)
+                    for (int y = std::max(main_general->position.y - Constant::GENERAL_ATTACK_RADIUS, 0); y <= std::min(main_general->position.y + Constant::GENERAL_ATTACK_RADIUS, Constant::row - 1); ++y) {
+                        Coord pos(x, y);
+                        if (dist_map[pos] > my_mobility || !game_state.can_general_step_on(pos, my_seat)) continue;
+
+                        std::vector<Coord> path{dist_map.path_to_origin(pos)};
+                        path.insert(path.begin(), main_general->position);
+                        int army_left = -((int)path.size() - 1);
+                        for (const Coord& p : path)
+                            army_left += game_state.eff_army(p, my_seat) * (p == enemy_general->position ? game_state.defence_multiplier(enemy_general->position) : 1);
+
+                        if (army_left > 0) { // 可攻击
+                            logger.log(LOG_LEVEL_INFO, "Critical_flaw found, rushing to %s [%s]", pos.str().c_str(), trigger ? "triggered" : "ignored");
+
+                            int army_to_move = game_state.eff_army(main_general->position, my_seat);
+                            for (int i = 1, siz = path.size(); i < siz; ++i) {
+                                if (!trigger) {
+                                    if (i == 1) logger.log(LOG_LEVEL_INFO, "\tPlanned action: %s", Operation::generals_skill(my_seat, SkillType::RUSH, path[i]).str().c_str());
+                                    else logger.log(LOG_LEVEL_INFO, "\tPlanned action: %s", Operation::move_army(path[i - 1], from_coord(path[i - 1], path[i]), army_to_move - 1).str().c_str());
+                                } else {
+                                    if (i == 1) my_operation_list.push_back(Operation::generals_skill(my_seat, SkillType::RUSH, path[i]));
+                                    else my_operation_list.push_back(Operation::move_army(path[i - 1], from_coord(path[i - 1], path[i]), army_to_move - 1));
+                                }
+                                army_to_move += game_state.eff_army(path[i], my_seat) - 1;
+                            }
+
+                            if (trigger) return;
+                        }
+                }
+            }
         }
 
         // 随便写点升级
