@@ -189,6 +189,9 @@ public:
     // 剩余移动步数
     int rest_move;
 
+    // 技能冷却剩余回合数
+    int cd(SkillType type) const noexcept { return skills_cd[static_cast<int>(type)]; }
+
     // 获取升级开销
     virtual int production_upgrade_cost() const noexcept = 0;
     virtual int defence_upgrade_cost() const noexcept = 0;
@@ -380,17 +383,23 @@ public:
         return -cell.army;
     }
 
+    // 计算`player`的`count`个士兵进攻`to`后剩余的军队数量，负数表示剩余的敌军数量
+    int army_after_move(int player, int count, const Coord& to, double attack_multiplier = 1.0) const noexcept {
+        assert(to.in_map());
+
+        const Cell& to_cell = board[to.x][to.y];
+        if (to_cell.player == player) return count + to_cell.army;
+
+        double defence = defence_multiplier(to);
+        double vs = count * attack_multiplier - to_cell.army * defence;
+        if (vs >= 0) return std::ceil(vs / attack_multiplier);
+        return -std::ceil((-vs) / defence);
+    }
+
     // 获取指定玩家的行动力
     int get_mobility(int player) const noexcept { return tech_level[player][static_cast<int>(TechType::MOBILITY)]; }
     // 计算指定玩家每回合的石油产量
-    int calc_oil_production(int player) const noexcept {
-        int ret = 0;
-        for (const Generals* gen : generals) {
-            if (dynamic_cast<const OilWell*>(gen) == nullptr || gen->player != player) continue;
-            ret += gen->produce_level;
-        }
-        return ret;
-    }
+    int calc_oil_production(int player) const noexcept;
 
     // 寻找将军id对应的格子，找不到返回`(-1,-1)`
     Coord find_general_position_by_id(int general_id) const noexcept {
@@ -487,6 +496,16 @@ double GameState::defence_multiplier(const Coord& pos, int player) const noexcep
 
     return defence;
 }
+
+int GameState::calc_oil_production(int player) const noexcept {
+    int ret = 0;
+    for (const Generals* gen : generals) {
+        if (dynamic_cast<const OilWell*>(gen) == nullptr || gen->player != player) continue;
+        ret += gen->produce_level;
+    }
+    return ret;
+}
+
 void GameState::update_round() noexcept {
     // 似乎要先每10回合增兵
     if (round % 10 == 0) for (int i = 0; i < Constant::row; ++i) for (int j = 0; j < Constant::col; ++j)

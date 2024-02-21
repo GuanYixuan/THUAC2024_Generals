@@ -68,7 +68,7 @@ public:
         return Operation(OperationType::UPDATE_GENERALS, {generals_id, static_cast<int>(type) + 1});
     }
     // 便捷构造：使用将军技能
-    static Operation generals_skill(int generals_id, SkillType type, const Coord& position) noexcept {
+    static Operation generals_skill(int generals_id, SkillType type, const Coord& position = {-1, -1}) noexcept {
         return Operation(OperationType::USE_GENERAL_SKILLS, {generals_id, static_cast<int>(type) + 1, position.x, position.y});
     }
     // 便捷构造：升级科技
