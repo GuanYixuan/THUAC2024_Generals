@@ -87,7 +87,7 @@ public:
 
     std::optional<Oil_cluster> cluster;
 
-    int oil_savings = 20;
+    int oil_savings;
 
     void main_process() {
         // 初始操作
@@ -116,55 +116,77 @@ public:
             return;
         }
 
-        // 随便写点升级
-        // 主将产量升级
-        int effective_oil = game_state.coin[my_seat];
-        const MainGenerals* main_general = dynamic_cast<const MainGenerals*>(game_state.generals[my_seat]);
-        if (effective_oil >= oil_savings + main_general->production_upgrade_cost()) {
-            my_operation_list.push_back(Operation::upgrade_generals(my_seat, QualityType::PRODUCTION));
-            effective_oil -= main_general->production_upgrade_cost();
-        }
-        // 产量升级完毕后考虑升级防御
-        if (effective_oil >= oil_savings + main_general->defence_upgrade_cost() &&
-            main_general->defence_level < 2 && main_general->produce_level >= Constant::GENERAL_PRODUCTION_VALUES[2]) {
-            my_operation_list.push_back(Operation::upgrade_generals(my_seat, QualityType::DEFENCE));
-            effective_oil -= main_general->defence_upgrade_cost();
-        }
+        // 更新石油目标储备量
+        int oil_after_op = game_state.coin[my_seat];
+        if (game_state.round > 15) oil_savings = 35;
+        else oil_savings = 20;
 
-        // 升级距离敌方足够远的油井
-        if (effective_oil >= oil_savings + 25 + Constant::OILWELL_PRODUCTION_COST[0]) {
+        // 计算“相遇时间”（仅考虑主将）
+        const MainGenerals* main_general = dynamic_cast<const MainGenerals*>(game_state.generals[my_seat]);
+        const MainGenerals* enemy_general = dynamic_cast<const MainGenerals*>(game_state.generals[1 - my_seat]);
+        Dist_map my_dist(game_state, main_general->position, Path_find_config{1.0});
+        int approach_time = (my_dist[enemy_general->position] - 5 - enemy_general->mobility_level) / (main_general->mobility_level + enemy_general->mobility_level);
+        int oil_on_approach = oil_after_op + game_state.calc_oil_production(my_seat) * std::max(0, approach_time);
+        logger.log(LOG_LEVEL_INFO, "[Assess] Approach time: %d, oil on approach: %d", approach_time, oil_on_approach);
+
+        // 考虑油井升级
+        int unlock_upgrade_2 = main_general->produce_level >= Constant::GENERAL_PRODUCTION_VALUES[2] &&
+                               main_general->defence_level >= Constant::GENERAL_DEFENCE_VALUES[1];
+        if (oil_after_op >= oil_savings + Constant::OILWELL_PRODUCTION_COST[0] ||
+            oil_on_approach + (Constant::OILWELL_PRODUCTION_VALUES[1] - Constant::OILWELL_PRODUCTION_VALUES[0]) * approach_time >= oil_savings + Constant::OILWELL_PRODUCTION_COST[0]) {
+
             for (int i = 0, siz = game_state.generals.size(); i < siz; ++i) {
                 const OilWell* well = dynamic_cast<const OilWell*>(game_state.generals[i]);
                 if (well == nullptr || well->player != my_seat) continue;
-                if (well->produce_level > Constant::OILWELL_PRODUCTION_VALUES[0]) continue;
 
-                Dist_map dist_map(game_state, well->position, {});
+                int tire = well->production_tire();
+                int cost = well->production_upgrade_cost();
+                if (tire >= 2 || (tire == 1 && !unlock_upgrade_2)) continue;
+                if (oil_after_op < oil_savings + cost ||
+                    oil_on_approach + (Constant::OILWELL_PRODUCTION_VALUES[tire + 1] - Constant::OILWELL_PRODUCTION_VALUES[tire]) * approach_time < oil_savings + cost) continue;
+
+                Dist_map dist_map(game_state, well->position, {1.0});
                 double min_dist = std::numeric_limits<double>::max();
                 for (int j = 0; j < siz; ++j) {
                     const Generals* enemy = game_state.generals[j];
-                    if (dynamic_cast<const OilWell*>(enemy) || enemy->player != 1 - my_seat) continue;
+                    if (enemy->player != 1 - my_seat || dynamic_cast<const OilWell*>(enemy) != nullptr) continue;
                     min_dist = std::min(min_dist, dist_map[enemy->position]);
                 }
-
-                if (min_dist >= 17) {
-                    my_operation_list.push_back(Operation::upgrade_generals(i, QualityType::PRODUCTION));
-                    effective_oil -= Constant::OILWELL_PRODUCTION_COST[0];
+                if (min_dist >= (tire == 0 ? 10 : 12)) {
+                    my_operation_list.push_back(Operation::upgrade_generals(well->id, QualityType::PRODUCTION));
+                    oil_after_op -= Constant::OILWELL_PRODUCTION_COST[0];
+                    oil_on_approach -= Constant::OILWELL_PRODUCTION_COST[0];
                     break;
                 }
             }
         }
 
-        // 足够有钱则升级移动力
-        if (game_state.tech_level[my_seat][static_cast<int>(TechType::MOBILITY)] == Constant::PLAYER_MOVEMENT_VALUES[0] && effective_oil >= oil_savings + Constant::PLAYER_MOVEMENT_COST[0]) {
-            my_operation_list.push_back(Operation::upgrade_tech(TechType::MOBILITY));
-            effective_oil -= Constant::PLAYER_MOVEMENT_COST[0];
+        // 注意：以下升级每回合至多进行一个
+        // 主将产量升级
+        if (oil_on_approach >= oil_savings + main_general->production_upgrade_cost()) {
+            my_operation_list.push_back(Operation::upgrade_generals(my_seat, QualityType::PRODUCTION));
+
+            oil_after_op -= main_general->production_upgrade_cost();
         }
-        if (game_state.tech_level[my_seat][static_cast<int>(TechType::MOBILITY)] == Constant::PLAYER_MOVEMENT_VALUES[1] && effective_oil >= oil_savings + Constant::PLAYER_MOVEMENT_COST[1]) {
-            my_operation_list.push_back(Operation::upgrade_tech(TechType::MOBILITY));
-            effective_oil -= Constant::PLAYER_MOVEMENT_COST[1];
+        // 主将防御升级
+        else if (oil_on_approach >= oil_savings + main_general->defence_upgrade_cost() && main_general->defence_level < 2 &&
+                 game_state[main_general->position].army > 40) {
+
+            my_operation_list.push_back(Operation::upgrade_generals(my_seat, QualityType::DEFENCE));
+            oil_after_op -= main_general->defence_upgrade_cost();
         }
 
-        // show_map(game_state, std::cerr);
+        // 足够有钱则升级移动力
+        else if (game_state.tech_level[my_seat][static_cast<int>(TechType::MOBILITY)] == Constant::PLAYER_MOVEMENT_VALUES[0] && oil_on_approach >= oil_savings + Constant::PLAYER_MOVEMENT_COST[0]) {
+            my_operation_list.push_back(Operation::upgrade_tech(TechType::MOBILITY));
+            oil_after_op -= Constant::PLAYER_MOVEMENT_COST[0];
+        }
+        else if (game_state.tech_level[my_seat][static_cast<int>(TechType::MOBILITY)] == Constant::PLAYER_MOVEMENT_VALUES[1] && oil_on_approach >= oil_savings + Constant::PLAYER_MOVEMENT_COST[1]) {
+            my_operation_list.push_back(Operation::upgrade_tech(TechType::MOBILITY));
+            oil_after_op -= Constant::PLAYER_MOVEMENT_COST[1];
+        }
+
+        // 向各个将领分配策略
         update_strategy();
 
         for (const General_strategy& strategy : strategies) {

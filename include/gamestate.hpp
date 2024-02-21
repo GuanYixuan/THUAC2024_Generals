@@ -12,6 +12,8 @@
     #define M_PI (3.14159265358979323846)
 #endif
 
+using namespace Constant;
+
 // 坐标类
 class Coord {
 public:
@@ -42,11 +44,11 @@ public:
     }
     // 判断`target`是否在此处将领的攻击范围内
     constexpr bool in_attack_range(const Coord& target) const noexcept {
-        return std::abs(x - target.x) <= Constant::GENERAL_ATTACK_RADIUS && std::abs(y - target.y) <= Constant::GENERAL_ATTACK_RADIUS;
+        return std::abs(x - target.x) <= GENERAL_ATTACK_RADIUS && std::abs(y - target.y) <= GENERAL_ATTACK_RADIUS;
     }
     // 判断`target`是否在此处超级武器的作用范围内
     constexpr bool in_super_weapon_range(const Coord& target) const noexcept {
-        return std::abs(x - target.x) <= Constant::SUPER_WEAPON_RADIUS && std::abs(y - target.y) <= Constant::SUPER_WEAPON_RADIUS;
+        return std::abs(x - target.x) <= SUPER_WEAPON_RADIUS && std::abs(y - target.y) <= SUPER_WEAPON_RADIUS;
     }
 
     // 计算此位置到另一个位置的曼哈顿距离
@@ -85,13 +87,13 @@ public:
 
 
     // 技能冷却回合数
-    constexpr int cd() const noexcept { return Constant::GENERAL_SKILL_CD[static_cast<int>(__val)]; }
+    constexpr int cd() const noexcept { return GENERAL_SKILL_CD[static_cast<int>(__val)]; }
 
     // 技能开销
-    constexpr int cost() const noexcept { return Constant::GENERAL_SKILL_COST[static_cast<int>(__val)]; }
+    constexpr int cost() const noexcept { return GENERAL_SKILL_COST[static_cast<int>(__val)]; }
 
     // 技能持续回合数
-    constexpr int duration() const noexcept { return Constant::GENERAL_SKILL_DURATION[static_cast<int>(__val)]; }
+    constexpr int duration() const noexcept { return GENERAL_SKILL_DURATION[static_cast<int>(__val)]; }
 
     // 获取描述字符串
     constexpr const char* str() const noexcept { return __str[static_cast<int>(__val)]; }
@@ -181,16 +183,21 @@ public:
     int mobility_level; //移动力等级
 
     // 技能冷却回合数
-    int skills_cd[Constant::GENERAL_SKILL_COUNT];
+    int skills_cd[GENERAL_SKILL_COUNT];
 
     // 技能持续回合数，注意下标0,1的元素无意义
-    int skill_duration[Constant::GENERAL_SKILL_COUNT];
+    int skill_duration[GENERAL_SKILL_COUNT];
 
     // 剩余移动步数
     int rest_move;
 
     // 技能冷却剩余回合数
     int cd(SkillType type) const noexcept { return skills_cd[static_cast<int>(type)]; }
+
+    // 获取各项等级
+    virtual int production_tire() const noexcept = 0;
+    virtual int defence_tire() const noexcept = 0;
+    virtual int movement_tire() const noexcept = 0;
 
     // 获取升级开销
     virtual int production_upgrade_cost() const noexcept = 0;
@@ -209,26 +216,42 @@ public:
         skills_cd{0}, skill_duration{0}, rest_move(1) {};
 
     // 是否有归属
-    bool is_occupied() const noexcept { return player >= 0 && player < Constant::PLAYER_COUNT; }
+    bool is_occupied() const noexcept { return player >= 0 && player < PLAYER_COUNT; }
 };
 
 // 油井类，继承自将军基类
 class OilWell final: public Generals {
 public:
-    int production_upgrade_cost() const noexcept override {
-        for (int i = 0; i < Constant::OILWELL_PRODUCTION_LEVELS; ++i)
-            if (produce_level == Constant::OILWELL_PRODUCTION_VALUES[i])
-                return Constant::OILWELL_PRODUCTION_COST[i];
+    int production_tire() const noexcept override {
+        switch (produce_level) {
+            case OILWELL_PRODUCTION_VALUES[0]: return 0;
+            case OILWELL_PRODUCTION_VALUES[1]: return 1;
+            case OILWELL_PRODUCTION_VALUES[2]: return 2;
+            case OILWELL_PRODUCTION_VALUES[3]: return 3;
+            default:
+                assert(!"Invalid oil well production level");
+                return 0;
+        }
+    }
+    int defence_tire() const noexcept override {
+        switch (int(defence_level*2)) {
+            case int(OILWELL_DEFENCE_VALUES[0]*2): return 0;
+            case int(OILWELL_DEFENCE_VALUES[1]*2): return 1;
+            case int(OILWELL_DEFENCE_VALUES[2]*2): return 2;
+            case int(OILWELL_DEFENCE_VALUES[3]*2): return 3;
+            default:
+                assert(!"Invalid oil well defence level");
+                return 0;
+        }
+    }
+    int movement_tire() const noexcept override {
         assert(false);
         return 0;
     }
-    int defence_upgrade_cost() const noexcept override {
-        for (int i = 0; i < Constant::OILWELL_DEFENCE_LEVELS; ++i)
-            if (defence_level == Constant::OILWELL_DEFENCE_VALUES[i])
-                return Constant::OILWELL_DEFENCE_COST[i];
-        assert(false);
-        return 0;
-    }
+
+
+    int production_upgrade_cost() const noexcept override { return OILWELL_PRODUCTION_COST[production_tire()]; }
+    int defence_upgrade_cost() const noexcept override { return OILWELL_DEFENCE_COST[defence_tire()]; }
     int movement_upgrade_cost() const noexcept override {
         assert(false);
         return 0;
@@ -248,27 +271,40 @@ public:
 // 主将类，继承自将军基类
 class MainGenerals final: public Generals {
 public:
-    int production_upgrade_cost() const noexcept override {
-        for (int i = 0; i < Constant::GENERAL_PRODUCTION_LEVELS; ++i)
-            if (produce_level == Constant::GENERAL_PRODUCTION_VALUES[i])
-                return Constant::GENERAL_PRODUCTION_COST[i] / 2;
-        assert(false);
-        return 0;
+    int production_tire() const noexcept override {
+        switch (produce_level) {
+            case GENERAL_PRODUCTION_VALUES[0]: return 0;
+            case GENERAL_PRODUCTION_VALUES[1]: return 1;
+            case GENERAL_PRODUCTION_VALUES[2]: return 2;
+            default:
+                assert(!"Invalid main general production level");
+                return 0;
+        }
     }
-    int defence_upgrade_cost() const noexcept override {
-        for (int i = 0; i < Constant::GENERAL_DEFENCE_LEVELS; ++i)
-            if (defence_level == Constant::GENERAL_DEFENCE_VALUES[i])
-                return Constant::GENERAL_DEFENCE_COST[i] / 2;
-        assert(false);
-        return 0;
+    int defence_tire() const noexcept override {
+        switch (int(defence_level)) {
+            case GENERAL_DEFENCE_VALUES[0]: return 0;
+            case GENERAL_DEFENCE_VALUES[1]: return 1;
+            case GENERAL_DEFENCE_VALUES[2]: return 2;
+            default:
+                assert(!"Invalid main general defence level");
+                return 0;
+        }
     }
-    int movement_upgrade_cost() const noexcept override {
-        for (int i = 0; i < Constant::GENERAL_MOVEMENT_LEVELS; ++i)
-            if (mobility_level == Constant::GENERAL_MOVEMENT_VALUES[i])
-                return Constant::GENERAL_MOVEMENT_COST[i] / 2;
-        assert(false);
-        return 0;
+    int movement_tire() const noexcept override {
+        switch (mobility_level) {
+            case GENERAL_MOVEMENT_VALUES[0]: return 0;
+            case GENERAL_MOVEMENT_VALUES[1]: return 1;
+            case GENERAL_MOVEMENT_VALUES[2]: return 2;
+            default:
+                assert(!"Invalid main general movement level");
+                return 0;
+        }
     }
+
+    int production_upgrade_cost() const noexcept override { return GENERAL_PRODUCTION_COST[production_tire()] / MAIN_GENERAL_DISCOUNT; }
+    int defence_upgrade_cost() const noexcept override { return GENERAL_DEFENCE_COST[defence_tire()] / MAIN_GENERAL_DISCOUNT; }
+    int movement_upgrade_cost() const noexcept override { return GENERAL_MOVEMENT_COST[movement_tire()] / MAIN_GENERAL_DISCOUNT; }
 
     bool production_up(GameState &gamestate, int player) noexcept override;
     bool defence_up(GameState &gamestate, int player) noexcept override;
@@ -279,27 +315,40 @@ public:
 // 副将类，继承自将军基类
 class SubGenerals final: public Generals {
 public:
-    int production_upgrade_cost() const noexcept override {
-        for (int i = 0; i < Constant::GENERAL_PRODUCTION_LEVELS; ++i)
-            if (produce_level == Constant::GENERAL_PRODUCTION_VALUES[i])
-                return Constant::GENERAL_PRODUCTION_COST[i];
-        assert(false);
-        return 0;
+    int production_tire() const noexcept override {
+        switch (produce_level) {
+            case GENERAL_PRODUCTION_VALUES[0]: return 0;
+            case GENERAL_PRODUCTION_VALUES[1]: return 1;
+            case GENERAL_PRODUCTION_VALUES[2]: return 2;
+            default:
+                assert(!"Invalid sub general production level");
+                return 0;
+        }
     }
-    int defence_upgrade_cost() const noexcept override {
-        for (int i = 0; i < Constant::GENERAL_DEFENCE_LEVELS; ++i)
-            if (defence_level == Constant::GENERAL_DEFENCE_VALUES[i])
-                return Constant::GENERAL_DEFENCE_COST[i];
-        assert(false);
-        return 0;
+    int defence_tire() const noexcept override {
+        switch (int(defence_level)) {
+            case GENERAL_DEFENCE_VALUES[0]: return 0;
+            case GENERAL_DEFENCE_VALUES[1]: return 1;
+            case GENERAL_DEFENCE_VALUES[2]: return 2;
+            default:
+                assert(!"Invalid sub general defence level");
+                return 0;
+        }
     }
-    int movement_upgrade_cost() const noexcept override {
-        for (int i = 0; i < Constant::GENERAL_MOVEMENT_LEVELS; ++i)
-            if (mobility_level == Constant::GENERAL_MOVEMENT_VALUES[i])
-                return Constant::GENERAL_MOVEMENT_COST[i];
-        assert(false);
-        return 0;
+    int movement_tire() const noexcept override {
+        switch (mobility_level) {
+            case GENERAL_MOVEMENT_VALUES[0]: return 0;
+            case GENERAL_MOVEMENT_VALUES[1]: return 1;
+            case GENERAL_MOVEMENT_VALUES[2]: return 2;
+            default:
+                assert(!"Invalid sub general movement level");
+                return 0;
+        }
     }
+
+    int production_upgrade_cost() const noexcept override { return GENERAL_PRODUCTION_COST[production_tire()]; }
+    int defence_upgrade_cost() const noexcept override { return GENERAL_DEFENCE_COST[defence_tire()]; }
+    int movement_upgrade_cost() const noexcept override { return GENERAL_MOVEMENT_COST[movement_tire()]; }
 
     bool production_up(GameState &gamestate, int player) noexcept override;
     bool defence_up(GameState &gamestate, int player) noexcept override;
@@ -334,7 +383,7 @@ public:
     bool has_general() const noexcept { return generals != nullptr; }
 
     // 格子是否有归属
-    bool is_occupied() const noexcept { return player >= 0 && player < Constant::PLAYER_COUNT; }
+    bool is_occupied() const noexcept { return player >= 0 && player < PLAYER_COUNT; }
 
 };
 
@@ -343,12 +392,12 @@ class GameState {
 public:
     int round; // 当前游戏回合数
     std::vector<Generals*> generals;
-    int coin[Constant::PLAYER_COUNT]; // 每个玩家的金币数量列表，分别对应玩家1，玩家2
+    int coin[PLAYER_COUNT]; // 每个玩家的金币数量列表，分别对应玩家1，玩家2
     std::vector<SuperWeapon> active_super_weapon;
-    bool super_weapon_unlocked[Constant::PLAYER_COUNT]; // 超级武器是否解锁的列表，解锁了是true，分别对应玩家1，玩家2
-    int super_weapon_cd[Constant::PLAYER_COUNT]; // 超级武器的冷却回合数列表，分别对应玩家1，玩家2
-    int tech_level[Constant::PLAYER_COUNT][4]; // 科技等级列表，第一层对应玩家一，玩家二，第二层分别对应行动力，免疫沼泽，免疫流沙，超级武器
-    int rest_move_step[Constant::PLAYER_COUNT];
+    bool super_weapon_unlocked[PLAYER_COUNT]; // 超级武器是否解锁的列表，解锁了是true，分别对应玩家1，玩家2
+    int super_weapon_cd[PLAYER_COUNT]; // 超级武器的冷却回合数列表，分别对应玩家1，玩家2
+    int tech_level[PLAYER_COUNT][4]; // 科技等级列表，第一层对应玩家一，玩家二，第二层分别对应行动力，免疫沼泽，免疫流沙，超级武器
+    int rest_move_step[PLAYER_COUNT];
 
     int next_generals_id;
 
@@ -435,8 +484,8 @@ double GameState::attack_multiplier(const Coord& pos, int player) const noexcept
     if (player == std::numeric_limits<int>::min()) player = cell.player;
 
     // 遍历cell周围至少5*5的区域，寻找里面是否有将军，他们是否使用了增益或减益技能
-    for (int i = -Constant::GENERAL_ATTACK_RADIUS; i <= Constant::GENERAL_ATTACK_RADIUS; ++i) {
-        for (int j = -Constant::GENERAL_ATTACK_RADIUS; j <= Constant::GENERAL_ATTACK_RADIUS; ++j) {
+    for (int i = -GENERAL_ATTACK_RADIUS; i <= GENERAL_ATTACK_RADIUS; ++i) {
+        for (int j = -GENERAL_ATTACK_RADIUS; j <= GENERAL_ATTACK_RADIUS; ++j) {
             int x = cell_x + i;
             int y = cell_y + j;
             if (0 <= x && x < Constant::row && 0 <= y && y < Constant::col) {
@@ -444,16 +493,16 @@ double GameState::attack_multiplier(const Coord& pos, int player) const noexcept
                 if (neighbor_cell.generals == nullptr) continue;
 
                 if (neighbor_cell.player == player && neighbor_cell.generals->skill_duration[SkillType::COMMAND] > 0)
-                    attack *= Constant::GENERAL_SKILL_EFFECT[SkillType::COMMAND];
+                    attack *= GENERAL_SKILL_EFFECT[SkillType::COMMAND];
                 if (neighbor_cell.player != player && neighbor_cell.generals->skill_duration[SkillType::WEAKEN] > 0)
-                    attack *= Constant::GENERAL_SKILL_EFFECT[SkillType::WEAKEN];
+                    attack *= GENERAL_SKILL_EFFECT[SkillType::WEAKEN];
             }
         }
     }
     // 考虑gamestate中的超级武器是否被激活，（可以获取到激活的位置）该位置的军队是否会被影响
     for (const SuperWeapon &weapon : active_super_weapon) {
         if (weapon.type == WeaponType::ATTACK_ENHANCE && pos.in_super_weapon_range(weapon.position) && weapon.player == player) {
-            attack *= Constant::ATTACK_ENHANCE_EFFECT;
+            attack *= ATTACK_ENHANCE_EFFECT;
             break;
         }
     }
@@ -469,8 +518,8 @@ double GameState::defence_multiplier(const Coord& pos, int player) const noexcep
     if (player == std::numeric_limits<int>::min()) player = cell.player;
 
     // 遍历cell周围至少5*5的区域，寻找里面是否有将军，他们是否使用了增益或减益技能
-    for (int i = -Constant::GENERAL_ATTACK_RADIUS; i <= Constant::GENERAL_ATTACK_RADIUS; ++i) {
-        for (int j = -Constant::GENERAL_ATTACK_RADIUS; j <= Constant::GENERAL_ATTACK_RADIUS; ++j) {
+    for (int i = -GENERAL_ATTACK_RADIUS; i <= GENERAL_ATTACK_RADIUS; ++i) {
+        for (int j = -GENERAL_ATTACK_RADIUS; j <= GENERAL_ATTACK_RADIUS; ++j) {
             int x = cell_x + i;
             int y = cell_y + j;
             if (0 <= x && x < Constant::row && 0 <= y && y < Constant::col) {
@@ -478,9 +527,9 @@ double GameState::defence_multiplier(const Coord& pos, int player) const noexcep
                 if (neighbor_cell.generals == nullptr) continue;
 
                 if (neighbor_cell.player == player && neighbor_cell.generals->skill_duration[SkillType::DEFENCE] > 0)
-                    defence *= Constant::GENERAL_SKILL_EFFECT[SkillType::DEFENCE];
+                    defence *= GENERAL_SKILL_EFFECT[SkillType::DEFENCE];
                 if (neighbor_cell.player != player && neighbor_cell.generals->skill_duration[SkillType::WEAKEN] > 0)
-                    defence *= Constant::GENERAL_SKILL_EFFECT[SkillType::WEAKEN];
+                    defence *= GENERAL_SKILL_EFFECT[SkillType::WEAKEN];
             }
         }
     }
@@ -489,7 +538,7 @@ double GameState::defence_multiplier(const Coord& pos, int player) const noexcep
     // 考虑gamestate中的超级武器是否被激活，（可以获取到激活的位置）该位置的军队是否会被影响
     for (const SuperWeapon &weapon : active_super_weapon) {
         if (weapon.type == WeaponType::ATTACK_ENHANCE && pos.in_super_weapon_range(weapon.position) && weapon.player == player) {
-            defence *= Constant::ATTACK_ENHANCE_EFFECT;
+            defence *= ATTACK_ENHANCE_EFFECT;
             break;
         }
     }
@@ -535,11 +584,11 @@ void GameState::update_round() noexcept {
     // 超级武器判定
     for (auto &weapon : this->active_super_weapon) {
         if (weapon.type == WeaponType::NUCLEAR_BOOM) {
-            for (int _i = std::max(0, weapon.position.x - Constant::SUPER_WEAPON_RADIUS); _i < std::min(Constant::row, weapon.position.x + Constant::SUPER_WEAPON_RADIUS); ++_i) {
-                for (int _j = std::max(0, weapon.position.y - Constant::SUPER_WEAPON_RADIUS); _j < std::min(Constant::col, weapon.position.y + Constant::SUPER_WEAPON_RADIUS); ++_j) {
+            for (int _i = std::max(0, weapon.position.x - SUPER_WEAPON_RADIUS); _i < std::min(Constant::row, weapon.position.x + SUPER_WEAPON_RADIUS); ++_i) {
+                for (int _j = std::max(0, weapon.position.y - SUPER_WEAPON_RADIUS); _j < std::min(Constant::col, weapon.position.y + SUPER_WEAPON_RADIUS); ++_j) {
                     Cell& cell = board[_i][_j];
                     if (cell.army > 0) {
-                        cell.army = std::max(0, cell.army - Constant::NUCLEAR_BOMB_DAMAGE);
+                        cell.army = std::max(0, cell.army - NUCLEAR_BOMB_DAMAGE);
                         if (cell.army == 0 && cell.generals == nullptr) cell.player = -1;
                     }
                 }
@@ -573,103 +622,76 @@ void GameState::update_round() noexcept {
 // ******************* MainGenerals、SubGenerals以及OilWell ********************
 
 bool MainGenerals::production_up(GameState &gamestate, int player) noexcept {
-    for (int i = 0; i < Constant::GENERAL_PRODUCTION_LEVELS; ++i) {
-        if (produce_level == Constant::GENERAL_PRODUCTION_VALUES[i]) {
-            int cost = Constant::GENERAL_PRODUCTION_COST[i] / Constant::MAIN_GENERAL_DISCOUNT;
-            if (gamestate.coin[player] < cost) return false;
+    int tire = production_tire();
+    int cost = production_upgrade_cost();
+    if (gamestate.coin[player] < cost) return false;
 
-            gamestate.coin[player] -= cost;
-            produce_level = Constant::GENERAL_PRODUCTION_VALUES[i + 1];
-            return true;
-        }
-    }
-    return false;
+    gamestate.coin[player] -= cost;
+    produce_level = Constant::GENERAL_PRODUCTION_VALUES[tire + 1];
+    return true;
 }
 bool MainGenerals::defence_up(GameState &gamestate, int player) noexcept {
-    for (int i = 0; i < Constant::GENERAL_DEFENCE_LEVELS; ++i) {
-        if (defence_level == Constant::GENERAL_DEFENCE_VALUES[i]) {
-            int cost = Constant::GENERAL_DEFENCE_COST[i] / Constant::MAIN_GENERAL_DISCOUNT;
-            if (gamestate.coin[player] < cost) return false;
+    int tire = defence_tire();
+    int cost = defence_upgrade_cost();
+    if (gamestate.coin[player] < cost) return false;
 
-            gamestate.coin[player] -= cost;
-            defence_level = Constant::GENERAL_DEFENCE_VALUES[i + 1];
-            return true;
-        }
-    }
-    return false;
+    gamestate.coin[player] -= cost;
+    defence_level = Constant::GENERAL_DEFENCE_VALUES[tire + 1];
+    return true;
 }
 bool MainGenerals::movement_up(GameState &gamestate, int player) noexcept {
-    for (int i = 0; i < Constant::GENERAL_MOVEMENT_LEVELS; ++i) {
-        if (mobility_level == Constant::GENERAL_MOVEMENT_VALUES[i]) {
-            int cost = Constant::GENERAL_MOVEMENT_COST[i] / Constant::MAIN_GENERAL_DISCOUNT;
-            if (gamestate.coin[player] < cost) return false;
+    int tire = movement_tire();
+    int cost = movement_upgrade_cost();
+    if (gamestate.coin[player] < cost) return false;
 
-            gamestate.coin[player] -= cost;
-            mobility_level = Constant::GENERAL_MOVEMENT_VALUES[i + 1];
-            rest_move = mobility_level; // 【立即恢复移动步数（未说明的feature）】
-            return true;
-        }
-    }
-    return false;
+    gamestate.coin[player] -= cost;
+    mobility_level = Constant::GENERAL_MOVEMENT_VALUES[tire + 1];
+    rest_move = mobility_level; // 【立即恢复移动步数（未说明的feature）】
+    return true;
 }
 bool SubGenerals::production_up(GameState &gamestate, int player) noexcept {
-    for (int i = 0; i < Constant::GENERAL_PRODUCTION_LEVELS; ++i) {
-        if (produce_level == Constant::GENERAL_PRODUCTION_VALUES[i]) {
-            if (gamestate.coin[player] < Constant::GENERAL_PRODUCTION_COST[i]) return false;
+    int tire = production_tire();
+    int cost = production_upgrade_cost();
+    if (gamestate.coin[player] < cost) return false;
 
-            gamestate.coin[player] -= Constant::GENERAL_PRODUCTION_COST[i];
-            produce_level = Constant::GENERAL_PRODUCTION_VALUES[i + 1];
-            return true;
-        }
-    }
-    return false;
+    gamestate.coin[player] -= cost;
+    produce_level = Constant::GENERAL_PRODUCTION_VALUES[tire + 1];
+    return true;
 }
 bool SubGenerals::defence_up(GameState &gamestate, int player) noexcept {
-    for (int i = 0; i < Constant::GENERAL_DEFENCE_LEVELS; ++i) {
-        if (defence_level == Constant::GENERAL_DEFENCE_VALUES[i]) {
-            if (gamestate.coin[player] < Constant::GENERAL_DEFENCE_COST[i]) return false;
+    int tire = defence_tire();
+    int cost = defence_upgrade_cost();
+    if (gamestate.coin[player] < cost) return false;
 
-            gamestate.coin[player] -= Constant::GENERAL_DEFENCE_COST[i];
-            defence_level = Constant::GENERAL_DEFENCE_VALUES[i + 1];
-            return true;
-        }
-    }
-    return false;
+    gamestate.coin[player] -= cost;
+    defence_level = Constant::GENERAL_DEFENCE_VALUES[tire + 1];
+    return true;
 }
 bool SubGenerals::movement_up(GameState &gamestate, int player) noexcept {
-    for (int i = 0; i < Constant::GENERAL_MOVEMENT_LEVELS; ++i) {
-        if (mobility_level == Constant::GENERAL_MOVEMENT_VALUES[i]) {
-            if (gamestate.coin[player] < Constant::GENERAL_MOVEMENT_COST[i]) return false;
+    int tire = movement_tire();
+    int cost = movement_upgrade_cost();
+    if (gamestate.coin[player] < cost) return false;
 
-            gamestate.coin[player] -= Constant::GENERAL_MOVEMENT_COST[i];
-            mobility_level = Constant::GENERAL_MOVEMENT_VALUES[i + 1];
-            rest_move = mobility_level; // 【立即恢复移动步数（未说明的feature）】
-            return true;
-        }
-    }
-    return false;
+    gamestate.coin[player] -= cost;
+    mobility_level = Constant::GENERAL_MOVEMENT_VALUES[tire + 1];
+    rest_move = mobility_level; // 【立即恢复移动步数（未说明的feature）】
+    return true;
 }
 bool OilWell::production_up(GameState &gamestate, int player) noexcept {
-    for (int i = 0; i < Constant::OILWELL_PRODUCTION_LEVELS; ++i) {
-        if (produce_level == Constant::OILWELL_PRODUCTION_VALUES[i]) {
-            if (gamestate.coin[player] < Constant::OILWELL_PRODUCTION_COST[i]) return false;
+    int tire = production_tire();
+    int cost = production_upgrade_cost();
+    if (gamestate.coin[player] < cost) return false;
 
-            gamestate.coin[player] -= Constant::OILWELL_PRODUCTION_COST[i];
-            produce_level = Constant::OILWELL_PRODUCTION_VALUES[i + 1];
-            return true;
-        }
-    }
-    return false;
+    gamestate.coin[player] -= cost;
+    produce_level = Constant::OILWELL_PRODUCTION_VALUES[tire + 1];
+    return true;
 }
 bool OilWell::defence_up(GameState &gamestate, int player) noexcept {
-    for (int i = 0; i < Constant::OILWELL_DEFENCE_LEVELS; ++i) {
-        if (defence_level == Constant::OILWELL_DEFENCE_VALUES[i]) {
-            if (gamestate.coin[player] < Constant::OILWELL_DEFENCE_COST[i]) return false;
+    int tire = defence_tire();
+    int cost = defence_upgrade_cost();
+    if (gamestate.coin[player] < cost) return false;
 
-            gamestate.coin[player] -= Constant::OILWELL_DEFENCE_COST[i];
-            defence_level = Constant::OILWELL_DEFENCE_VALUES[i + 1];
-            return true;
-        }
-    }
-    return false;
+    gamestate.coin[player] -= cost;
+    defence_level = Constant::OILWELL_DEFENCE_VALUES[tire + 1];
+    return true;
 }

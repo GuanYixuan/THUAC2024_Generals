@@ -48,9 +48,10 @@ public:
      * @note 此方法断言所有敌方操作合法
      */
     void apply_enemy_ops(const std::vector<Operation> &ops) {
+        logger.log(LOG_LEVEL_INFO, "Applying enemy ops:");
         for (const auto &op : ops) {
             bool valid = execute_single_command(1 - my_seat, op);
-            logger.log(LOG_LEVEL_INFO, "Enemy op: %s", op.str().c_str());
+            logger.log(LOG_LEVEL_INFO, "\tOp: %s", op.str().c_str());
 
             if (!valid) {
                 show_map(game_state, std::cerr);
@@ -170,9 +171,11 @@ void GameController::init()
 
 void GameController::finish_and_send_our_ops() {
     // 应用我方操作
+    logger.log(LOG_LEVEL_INFO, "Applying our ops:");
     for (const Operation &op : my_operation_list) {
         bool valid = execute_single_command(my_seat, op);
-        logger.log(LOG_LEVEL_INFO, "Our op: %s", op.str().c_str());
+
+        logger.log(LOG_LEVEL_INFO, "\tOp: %s", op.str().c_str());
         if (!valid) throw std::runtime_error("Sending invalid operation: " + op.str());
     }
 
