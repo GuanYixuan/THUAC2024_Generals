@@ -515,8 +515,87 @@ private:
         }
     }
 
+    int next_action_index = 0;
+    std::optional<Militia_plan> militia_plan;
     void militia_move() {
-        Militia_analyzer analyzer(game_state);
+        // 10回合分析一次
+        if (game_state.round % 10 == 1) {
+            Militia_analyzer analyzer(game_state);
+
+            // 寻找总时长尽量小的方案，且要求集合用时不超过7步
+            std::optional<Militia_plan> best_plan;
+            for (int i = 0, siz = game_state.generals.size(); i < siz; ++i) {
+                const OilWell* well = dynamic_cast<const OilWell*>(game_state.generals[i]);
+                if (well == nullptr || well->player != -1 || !game_state.can_soldier_step_on(well->position, my_seat)) continue;
+
+                std::optional<Militia_plan> plan = analyzer.search_plan(well);
+                if (!plan || plan->gather_steps > 7) continue;
+
+                if (!best_plan) {
+                    best_plan.emplace(plan.value());
+                    continue;
+                }
+
+                // 比较两种方案
+                bool better = false;
+                better |= (plan->plan.size() < best_plan->plan.size());
+                better |= (plan->plan.size() == best_plan->plan.size() && plan->army_used < best_plan->army_used);
+                if (better) best_plan.emplace(plan.value());
+            }
+
+            if (best_plan && best_plan->plan.size() <= 16) {
+                militia_plan.emplace(best_plan.value());
+                next_action_index = 0;
+
+                logger.log(LOG_LEVEL_INFO, "[Militia] Militia plan size %d, gather %d, found for target %s:", militia_plan->plan.size(), militia_plan->gather_steps, militia_plan->target->position.str().c_str());
+                for (const auto& op : militia_plan->plan) logger.log(LOG_LEVEL_INFO, "\t%s->%s", op.first.str().c_str(), (op.first + DIRECTION_ARR[op.second]).str().c_str());
+            }
+        }
+
+        // 执行计划
+        if (!remain_move_count) return;
+        if (!militia_plan || next_action_index >= militia_plan->plan.size()) { // 任务已完成
+            // 寻找可扩展的格子
+            for (int x = 0; x < Constant::col; ++x) for (int y = 0; y < Constant::row; ++y) {
+                Coord pos{x, y};
+                const Cell& cell = game_state[pos];
+                if (cell.player != my_seat || cell.army <= 1) continue;
+                if (cell.generals && dynamic_cast<const OilWell*>(cell.generals) == nullptr) continue; // 排除主副将格
+
+                // 尝试扩展
+                for (int dir = 0; dir < DIRECTION_COUNT; ++dir) {
+                    Coord next_pos = pos + DIRECTION_ARR[dir];
+                    if (!next_pos.in_map() || !game_state.can_soldier_step_on(next_pos, my_seat)) continue; // 排除无法走上的沼泽
+
+                    const Cell& next_cell = game_state[next_pos];
+                    if (next_cell.player == my_seat || next_cell.type == CellType::DESERT) continue; // 排除自己的格子和沙漠格
+                    if (next_cell.player == 1-my_seat && next_cell.army > cell.army - 1) continue; // 排除攻不下（无法中立化）的对方格
+                    if (next_cell.player == -1 && next_cell.army >= cell.army - 1) continue; // 中立格弄成中立也没用
+
+                    // 进行移动
+                    logger.log(LOG_LEVEL_INFO, "[Militia] Expanding to %s", next_pos.str().c_str());
+                    my_operation_list.push_back(Operation::move_army(pos, static_cast<Direction>(dir), cell.army - 1));
+                    remain_move_count -= 1;
+                    break;
+                }
+                if (!remain_move_count) return;
+            }
+        } else {
+            while (remain_move_count && next_action_index < militia_plan->plan.size()) {
+                // 一些初步检查
+                const Coord& pos = militia_plan->plan[next_action_index].first;
+                const Cell& cell = game_state[pos];
+                if (cell.player != my_seat || cell.army <= 1) {
+                    militia_plan.reset();
+                    break;
+                }
+
+                logger.log(LOG_LEVEL_INFO, "[Militia] Executing plan step %d, %s->%s", next_action_index+1, pos.str().c_str(), (pos + DIRECTION_ARR[militia_plan->plan[next_action_index].second]).str().c_str());
+                my_operation_list.push_back(Operation::move_army(pos, militia_plan->plan[next_action_index].second, cell.army - 1));
+                remain_move_count -= 1;
+                next_action_index += 1;
+            }
+        }
     }
 };
 
