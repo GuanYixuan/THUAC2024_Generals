@@ -88,6 +88,8 @@ public:
     std::optional<Oil_cluster> cluster;
 
     int oil_savings;
+    int oil_after_op;
+    int remain_move_count;
 
     void main_process() {
         // 初始操作
@@ -104,6 +106,12 @@ public:
             return;
         }
 
+        // 参数更新
+        oil_after_op = game_state.coin[my_seat];
+        if (game_state.round > 15) oil_savings = 35;
+        else oil_savings = 20;
+        remain_move_count = game_state.rest_move_step[my_seat];
+
         // 进攻搜索
         Attack_searcher searcher(my_seat, game_state);
         std::optional<std::vector<Operation>> ret = searcher.search();
@@ -116,11 +124,105 @@ public:
             return;
         }
 
-        // 更新石油目标储备量
-        int oil_after_op = game_state.coin[my_seat];
-        if (game_state.round > 15) oil_savings = 35;
-        else oil_savings = 20;
+        // 考虑可能的升级
+        assess_upgrades();
 
+        // 向各个将领分配策略
+        update_strategy();
+
+        // 根据策略执行操作
+        execute_strategy();
+
+        // 民兵任务分配与移动
+        militia_move();
+    }
+
+    [[noreturn]] void run() {
+        init();
+        while (true) {
+            // 先手
+            if (my_seat == 0) {
+                // 给出操作
+                main_process();
+                // 向judger发送操作
+                finish_and_send_our_ops();
+                // 读取并应用敌方操作
+                read_and_apply_enemy_ops();
+                // 更新回合
+                game_state.update_round();
+                logger.round = game_state.round;
+            }
+            // 后手
+            else {
+                // 读取并应用敌方操作
+                read_and_apply_enemy_ops();
+                // 给出操作
+                main_process();
+                // 向judger发送操作
+                finish_and_send_our_ops();
+                // 更新回合
+                game_state.update_round();
+                logger.round = game_state.round;
+            }
+        }
+    }
+
+private:
+    std::vector<Oil_cluster> identify_oil_clusters() const {
+        static constexpr double MIN_ENEMY_DIST = 7.0;
+        static constexpr double MAX_DIST = 7.0;
+
+        static constexpr int MIN_CLUSTER_SIZE = 3;
+
+        std::vector<Oil_cluster> clusters;
+
+        // 计算双方距离
+        Dist_map my_dist(game_state, game_state.generals[my_seat]->position, {2.0}); // 沙漠视为2格
+        Dist_map enemy_dist(game_state, game_state.generals[1 - my_seat]->position, {2.0});
+
+        // 考虑各个油井作为中心的可能性
+        for (int i = 0, siz = game_state.generals.size(); i < siz; ++i) {
+            const OilWell* center_well = dynamic_cast<const OilWell*>(game_state.generals[i]);
+            if (center_well == nullptr || game_state[center_well->position].type == CellType::SWAMP) continue;
+
+            // 计算距离
+            int my_dist_to_center = my_dist[center_well->position];
+            int enemy_dist_to_center = enemy_dist[center_well->position];
+            Dist_map dist_map(game_state, center_well->position, {2.0});
+
+            // 搜索其它油井
+            Oil_cluster cluster(center_well);
+            cluster.wells.push_back(center_well);
+            for (int j = 0; j < siz; ++j) {
+                const OilWell* well = dynamic_cast<const OilWell*>(game_state.generals[j]);
+                if (well == nullptr || j == i) continue;
+
+                if (dist_map[well->position] <= MAX_DIST && enemy_dist[well->position] >= MIN_ENEMY_DIST) {
+                    cluster.wells.push_back(well);
+                    cluster.total_dist += dist_map[well->position];
+                }
+            }
+
+            // 去掉太小的
+            if (cluster.wells.size() < MIN_CLUSTER_SIZE) continue;
+
+            // 过滤距离太过悬殊的
+            if (my_dist_to_center >= 5 && my_dist_to_center >= 2 * enemy_dist_to_center) {
+                logger.log(LOG_LEVEL_INFO, "[Cluster finding] Oil cluster too far (%d vs %d) %s", my_dist_to_center, enemy_dist_to_center, cluster.str().c_str());
+                continue;
+            }
+
+            clusters.push_back(cluster);
+            cluster.sort_wells(enemy_dist);
+            logger.log(LOG_LEVEL_INFO, "[Cluster finding] %s", cluster.str().c_str());
+        }
+
+        // 按数量和总距离排序
+        std::sort(clusters.begin(), clusters.end());
+        return clusters;
+    }
+
+    void assess_upgrades() {
         // 计算“相遇时间”（仅考虑主将）
         const MainGenerals* main_general = dynamic_cast<const MainGenerals*>(game_state.generals[my_seat]);
         const MainGenerals* enemy_general = dynamic_cast<const MainGenerals*>(game_state.generals[1 - my_seat]);
@@ -185,166 +287,6 @@ public:
             my_operation_list.push_back(Operation::upgrade_tech(TechType::MOBILITY));
             oil_after_op -= Constant::PLAYER_MOVEMENT_COST[1];
         }
-
-        // 向各个将领分配策略
-        update_strategy();
-
-        for (const General_strategy& strategy : strategies) {
-            const Generals* general = game_state.generals[strategy.general_id];
-            int curr_army = game_state[general->position].army;
-
-            if (strategy.type == General_strategy_type::DEFEND || strategy.type == General_strategy_type::OCCUPY) {
-                const Coord& target = strategy.target.coord;
-                Dist_map dist_map(game_state, target, {});
-                Direction dir = dist_map.direction_to_origin(general->position);
-                Coord next_pos = general->position + DIRECTION_ARR[dir];
-
-                const Cell& next_cell = game_state[next_pos];
-                int next_cell_army = ceil(next_cell.army * game_state.defence_multiplier(next_pos));
-
-                const Generals* enemy = strategy.target.general;
-                const Critical_tactic* tactic = strategy.target.danger->tactic;
-                if (enemy && Dist_map::effect_dist(next_pos, enemy->position, tactic->can_rush, game_state.get_mobility(1-my_seat)) < 0) { // 不踏入危险区，可能会跟direction_to_origin冲突
-                    logger.log(LOG_LEVEL_INFO, "\tGeneral %s avoiding danger zone", general->position.str().c_str());
-                    continue;
-                }
-
-                if (strategy.type == General_strategy_type::DEFEND) {
-                    if (next_pos == target || curr_army <= 1) logger.log(LOG_LEVEL_INFO, "\t[Defend] General stay at %s", general->position.str().c_str());
-                    else if (curr_army - 1 > (next_cell.player == my_seat ? 0 : next_cell_army)) {
-                        logger.log(LOG_LEVEL_INFO, "\t[Defend] General at %s -> %s", general->position.str().c_str(), next_pos.str().c_str());
-                        my_operation_list.push_back(Operation::move_army(general->position, dir, curr_army - 1));
-                        my_operation_list.push_back(Operation::move_generals(strategy.general_id, next_pos));
-                    }
-                } else { // OCCUPY
-                    logger.log(LOG_LEVEL_INFO, "\t[Occupy] General at %s -> %s", general->position.str().c_str(), next_pos.str().c_str());
-                    if (next_pos == target) {
-                        if (curr_army - 1 > next_cell_army)
-                            my_operation_list.push_back(Operation::move_army(general->position, dir, next_cell_army + 1));
-                    } else {
-                        if (curr_army > 1 && (curr_army - 1 > (next_cell.player == my_seat ? 0 : next_cell.army))) {
-                            my_operation_list.push_back(Operation::move_army(general->position, dir, curr_army - 1));
-                            my_operation_list.push_back(Operation::move_generals(strategy.general_id, next_pos));
-                        }
-                    }
-                }
-            } else if (strategy.type == General_strategy_type::ATTACK) {
-
-            } else if (strategy.type == General_strategy_type::RETREAT) {
-                logger.log(LOG_LEVEL_INFO, "General %d retreating", strategy.general_id);
-                const Generals* enemy = strategy.target.general;
-                const Critical_tactic* tactic = strategy.target.danger->tactic;
-
-                // 寻找能走到的最大有效距离
-                Coord best_pos{-1, -1};
-                int max_eff_dist = Dist_map::effect_dist(general->position, enemy->position, tactic->can_rush);
-                for (int dir = 0; dir < DIRECTION_COUNT; ++dir) {
-                    Coord next_pos = general->position + DIRECTION_ARR[dir];
-                    if (!next_pos.in_map() || !game_state.can_general_step_on(next_pos, my_seat)) continue;
-                    if (curr_army - 1 <= -game_state.eff_army(next_pos, my_seat)) continue;
-
-                    int eff_dist = Dist_map::effect_dist(next_pos, enemy->position, tactic->can_rush);
-                    logger.log(LOG_LEVEL_DEBUG, "Next pos %s, eff dist %d", next_pos.str().c_str(), eff_dist);
-                    if (eff_dist > max_eff_dist) {
-                        best_pos = next_pos;
-                        max_eff_dist = eff_dist;
-                    }
-                }
-
-                // 尝试移动（没有检查兵数的问题）
-                if (best_pos.in_map()) {
-                    if (curr_army > 1)
-                        my_operation_list.push_back(Operation::move_army(general->position, from_coord(general->position, best_pos), curr_army - 1));
-                    my_operation_list.push_back(Operation::move_generals(strategy.general_id, best_pos));
-                    logger.log(LOG_LEVEL_INFO, "General at %s -> %s, dist -> %d", general->position.str().c_str(), best_pos.str().c_str(), max_eff_dist);
-                }
-            } else assert(!"Invalid strategy type");
-        }
-    }
-
-    [[noreturn]] void run() {
-        init();
-        while (true) {
-            // 先手
-            if (my_seat == 0) {
-                // 给出操作
-                main_process();
-                // 向judger发送操作
-                finish_and_send_our_ops();
-                // 读取并应用敌方操作
-                read_and_apply_enemy_ops();
-                // 更新回合
-                game_state.update_round();
-                logger.round = game_state.round;
-            }
-            // 后手
-            else {
-                // 读取并应用敌方操作
-                read_and_apply_enemy_ops();
-                // 给出操作
-                main_process();
-                // 向judger发送操作
-                finish_and_send_our_ops();
-                // 更新回合
-                game_state.update_round();
-                logger.round = game_state.round;
-            }
-        }
-    }
-
-private:
-    std::vector<Oil_cluster> identify_oil_clusters() const {
-        static constexpr double MIN_ENEMY_DIST = 7.0;
-        static constexpr double MAX_DIST = 7.0;
-
-        static constexpr int MIN_CLUSTER_SIZE = 3;
-
-        std::vector<Oil_cluster> clusters;
-
-        // 计算双方距离
-        Dist_map my_dist(game_state, game_state.generals[my_seat]->position, {});
-        Dist_map enemy_dist(game_state, game_state.generals[1 - my_seat]->position, {});
-
-        // 考虑各个油井作为中心的可能性
-        for (int i = 0, siz = game_state.generals.size(); i < siz; ++i) {
-            const OilWell* center_well = dynamic_cast<const OilWell*>(game_state.generals[i]);
-            if (center_well == nullptr || game_state[center_well->position].type == CellType::SWAMP) continue;
-
-            // 计算距离
-            int my_dist_to_center = my_dist[center_well->position];
-            int enemy_dist_to_center = enemy_dist[center_well->position];
-            Dist_map dist_map(game_state, center_well->position, {});
-
-            // 搜索其它油井
-            Oil_cluster cluster(center_well);
-            cluster.wells.push_back(center_well);
-            for (int j = 0; j < siz; ++j) {
-                const OilWell* well = dynamic_cast<const OilWell*>(game_state.generals[j]);
-                if (well == nullptr || j == i) continue;
-
-                if (dist_map[well->position] <= MAX_DIST && enemy_dist[well->position] >= MIN_ENEMY_DIST) {
-                    cluster.wells.push_back(well);
-                    cluster.total_dist += dist_map[well->position];
-                }
-            }
-
-            // 去掉太小的
-            if (cluster.wells.size() < MIN_CLUSTER_SIZE) continue;
-
-            // 过滤距离太过悬殊的
-            if (my_dist_to_center >= 5 && my_dist_to_center >= 2 * enemy_dist_to_center) {
-                logger.log(LOG_LEVEL_INFO, "[Cluster finding] Oil cluster too far (%d vs %d) %s", my_dist_to_center, enemy_dist_to_center, cluster.str().c_str());
-                continue;
-            }
-
-            clusters.push_back(cluster);
-            cluster.sort_wells(enemy_dist);
-            logger.log(LOG_LEVEL_INFO, "[Cluster finding] %s", cluster.str().c_str());
-        }
-
-        // 按数量和总距离排序
-        std::sort(clusters.begin(), clusters.end());
-        return clusters;
     }
 
     void update_strategy() {
@@ -456,7 +398,7 @@ private:
             // }
 
             // 占领：3格内油田优先
-            Dist_map dist_map(game_state, general->position, {});
+            Dist_map dist_map(game_state, general->position, Path_find_config{2.0});
             int best_well = -1;
             for (int j = 0; j < siz; ++j) {
                 const Generals* oil_well = game_state.generals[j];
@@ -491,6 +433,90 @@ private:
                 logger.log(LOG_LEVEL_INFO, "[Allocate] General %s -> well %s", general->position.str().c_str(), game_state.generals[best_well]->position.str().c_str());
             }
         }
+    }
+
+    void execute_strategy() {
+        for (const General_strategy& strategy : strategies) {
+            const Generals* general = game_state.generals[strategy.general_id];
+            int curr_army = game_state[general->position].army;
+
+            if (strategy.type == General_strategy_type::DEFEND || strategy.type == General_strategy_type::OCCUPY) {
+                const Coord& target = strategy.target.coord;
+                Dist_map dist_map(game_state, target, Path_find_config{1.0});
+                Direction dir = dist_map.direction_to_origin(general->position);
+                Coord next_pos = general->position + DIRECTION_ARR[dir];
+
+                const Cell& next_cell = game_state[next_pos];
+                int next_cell_army = ceil(next_cell.army * game_state.defence_multiplier(next_pos));
+
+                const Generals* enemy = strategy.target.general;
+                const Critical_tactic* tactic = strategy.target.danger->tactic;
+                if (enemy && Dist_map::effect_dist(next_pos, enemy->position, tactic->can_rush, game_state.get_mobility(1-my_seat)) < 0) { // 不踏入危险区，可能会跟direction_to_origin冲突
+                    logger.log(LOG_LEVEL_INFO, "\tGeneral %s avoiding danger zone", general->position.str().c_str());
+                    continue;
+                }
+
+                if (strategy.type == General_strategy_type::DEFEND) {
+                    if (next_pos == target || curr_army <= 1) logger.log(LOG_LEVEL_INFO, "\t[Defend] General stay at %s", general->position.str().c_str());
+                    else if (curr_army - 1 > (next_cell.player == my_seat ? 0 : next_cell_army)) {
+                        logger.log(LOG_LEVEL_INFO, "\t[Defend] General at %s -> %s", general->position.str().c_str(), next_pos.str().c_str());
+                        my_operation_list.push_back(Operation::move_army(general->position, dir, curr_army - 1));
+                        my_operation_list.push_back(Operation::move_generals(strategy.general_id, next_pos));
+                        remain_move_count -= 1;
+                    }
+                } else { // OCCUPY
+                    logger.log(LOG_LEVEL_INFO, "\t[Occupy] General at %s -> %s", general->position.str().c_str(), next_pos.str().c_str());
+                    if (next_pos == target) {
+                        if (curr_army - 1 > next_cell_army) {
+                            my_operation_list.push_back(Operation::move_army(general->position, dir, next_cell_army + 1));
+                            remain_move_count -= 1;
+                        }
+                    } else {
+                        if (curr_army > 1 && (curr_army - 1 > (next_cell.player == my_seat ? 0 : next_cell.army))) {
+                            my_operation_list.push_back(Operation::move_army(general->position, dir, curr_army - 1));
+                            my_operation_list.push_back(Operation::move_generals(strategy.general_id, next_pos));
+                            remain_move_count -= 1;
+                        }
+                    }
+                }
+            } else if (strategy.type == General_strategy_type::ATTACK) {
+
+            } else if (strategy.type == General_strategy_type::RETREAT) {
+                logger.log(LOG_LEVEL_INFO, "General %d retreating", strategy.general_id);
+                const Generals* enemy = strategy.target.general;
+                const Critical_tactic* tactic = strategy.target.danger->tactic;
+
+                // 寻找能走到的最大有效距离
+                Coord best_pos{-1, -1};
+                int max_eff_dist = Dist_map::effect_dist(general->position, enemy->position, tactic->can_rush);
+                for (int dir = 0; dir < DIRECTION_COUNT; ++dir) {
+                    Coord next_pos = general->position + DIRECTION_ARR[dir];
+                    if (!next_pos.in_map() || !game_state.can_general_step_on(next_pos, my_seat)) continue;
+                    if (curr_army - 1 <= -game_state.eff_army(next_pos, my_seat)) continue;
+
+                    int eff_dist = Dist_map::effect_dist(next_pos, enemy->position, tactic->can_rush);
+                    logger.log(LOG_LEVEL_DEBUG, "Next pos %s, eff dist %d", next_pos.str().c_str(), eff_dist);
+                    if (eff_dist > max_eff_dist) {
+                        best_pos = next_pos;
+                        max_eff_dist = eff_dist;
+                    }
+                }
+
+                // 尝试移动（没有检查兵数的问题）
+                if (best_pos.in_map()) {
+                    if (curr_army > 1) {
+                        my_operation_list.push_back(Operation::move_army(general->position, from_coord(general->position, best_pos), curr_army - 1));
+                        remain_move_count -= 1;
+                    }
+                    my_operation_list.push_back(Operation::move_generals(strategy.general_id, best_pos));
+                    logger.log(LOG_LEVEL_INFO, "General at %s -> %s, dist -> %d", general->position.str().c_str(), best_pos.str().c_str(), max_eff_dist);
+                }
+            } else assert(!"Invalid strategy type");
+        }
+    }
+
+    void militia_move() {
+        Militia_analyzer analyzer(game_state);
     }
 };
 
