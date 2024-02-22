@@ -134,7 +134,7 @@ enum class TechType {
 };
 
 // 方向类型
-enum Direction {
+enum Direction : int8_t {
     LEFT = 0,
     RIGHT = 1,
     DOWN = 2,
@@ -142,6 +142,7 @@ enum Direction {
 };
 constexpr int DIRECTION_COUNT = 4;
 constexpr Coord DIRECTION_ARR[DIRECTION_COUNT] = {Coord(-1, 0), Coord(1, 0), Coord(0, -1), Coord(0, 1)}; // 方向数组
+constexpr Direction dir_reverse(Direction dir) noexcept { return static_cast<Direction>(dir ^ 1); }
 Direction from_coord(const Coord& from, const Coord& to) noexcept {
     assert(to.dist_to(from) == 1);
     if (from.x < to.x) return RIGHT;

@@ -25,7 +25,7 @@ struct Path_find_config {
     // 最大搜索距离
     double max_dist;
 
-    Path_find_config(double desert_dist = 2, double swamp_dist = 1e9, bool general_path = true, double max_dist = 1e9) noexcept :
+    Path_find_config(double desert_dist, double swamp_dist = 1e9, bool general_path = true, double max_dist = 1e9) noexcept :
         desert_dist(desert_dist), swamp_dist(swamp_dist), general_path(general_path), max_dist(max_dist) {}
 
 };
@@ -121,6 +121,102 @@ public:
 private:
     int attacker_seat;
     const GameState& state;
+};
+
+// 民兵“根据地”：一块连起来的有兵区域
+class Militia_area {
+public:
+    // 根据地的面积
+    int area;
+    // 根据地能够汇集的最大军队数量
+    int max_army;
+    // 区域遮罩
+    bool mask[Constant::col][Constant::row];
+
+    // 取值函数
+    bool& operator[] (const Coord& coord) noexcept {
+        assert(coord.in_map());
+        return mask[coord.x][coord.y];
+    }
+    bool operator[] (const Coord& coord) const noexcept {
+        assert(coord.in_map());
+        return mask[coord.x][coord.y];
+    }
+    bool* operator[] (int x) noexcept { return mask[x]; }
+
+    Militia_area() noexcept : area(0), max_army(0), mask{0} {}
+};
+
+struct Militia_dist_info {
+    // 最小距离
+    int dist;
+    // 最近点（集合点）
+    Coord clostest_point;
+    // 对应的根据地
+    const Militia_area* area;
+
+    Militia_dist_info(int dist, const Coord& clostest_point, const Militia_area* area) noexcept :
+        dist(dist), clostest_point(clostest_point), area(area) {}
+
+    bool operator< (const Militia_dist_info& other) const noexcept {
+        if (dist != other.dist) return dist < other.dist;
+        return area->max_army < other.area->max_army; // 优先选择军队数量最小的根据地
+    }
+};
+
+// 一次民兵行动
+class Militia_plan {
+public:
+    // 目标
+    const Generals* target;
+    // 发起行动的根据地
+    const Militia_area& area;
+    // 行动方案，每一个元素均为一个“从A出发，向dir方向移动”的操作
+    std::vector<std::pair<Coord, Direction>> plan;
+
+    // 需要的军队数量
+    int army_used;
+    // 军队汇集至集合点需要的步数
+    int gather_steps;
+
+    // 构造函数：通过`calc_gather_plan`计算出的`plan`构造
+    Militia_plan(const Generals* target, const Militia_area& area, std::vector<std::pair<Coord, Direction>>&& plan, int army_used) noexcept :
+        target(target), area(area), plan(std::move(plan)), army_used(army_used), gather_steps(this->plan.size()) {}
+    Militia_plan(const Militia_plan&) noexcept = default;
+
+};
+
+// 民兵分析器
+class Militia_analyzer {
+public:
+    // 根据地列表
+    std::vector<Militia_area> areas;
+
+    // 指定当前状态并进行分析
+    Militia_analyzer(const GameState& state) noexcept;
+
+    // 针对一个目标（油井或中立副将）搜索可行的占领方案
+    std::optional<Militia_plan> search_plan(const Generals* target) const noexcept;
+
+private:
+    const GameState& state;
+
+    mutable bool vis[Constant::col][Constant::row];
+    // 对`areas`中最后一个根据地进行DFS
+    void analyzer_dfs(const Coord& coord) noexcept;
+
+    // 计算应当如何从`info`中的根据地汇集`required_army`规模的军队至`info.clostest_point`
+    std::vector<std::pair<Coord, Direction>> calc_gather_plan(const Militia_dist_info& info, int required_army) const noexcept;
+
+    struct __Queue_Node {
+        Coord coord;
+        int army;
+        // 扩展至此格时的方向
+        Direction dir;
+
+        __Queue_Node(const Coord& coord, int army, Direction dir) noexcept : coord(coord), army(army), dir(dir) {}
+        bool operator< (const __Queue_Node& other) const noexcept { return army < other.army; }
+    };
 };
 
 // **************************************** 寻路部分实现 ****************************************
@@ -320,4 +416,128 @@ std::optional<std::vector<Operation>> Attack_searcher::search() const noexcept {
             }
         }
     return std::nullopt;
+}
+
+// *************************************** 民兵分析器实现 ***************************************
+
+Militia_analyzer::Militia_analyzer(const GameState& state) noexcept : state(state) {
+    // 寻找所有根据地
+    memset(vis, 0, sizeof(vis));
+    for (int x = 0; x < Constant::col; ++x) for (int y = 0; y < Constant::row; ++y) {
+        Coord coord(x, y);
+        if (vis[x][y] || state[coord].player != my_seat) continue;
+
+        const Generals* generals = state[coord].generals;
+        if (generals != nullptr && dynamic_cast<const MainGenerals*>(generals)) continue; // 不动主将
+
+        areas.emplace_back();
+        analyzer_dfs(coord);
+
+        logger.log(LOG_LEVEL_DEBUG, "Militia area at %s with area %d and max army %d", coord.str().c_str(), areas.back().area, areas.back().max_army);
+    }
+}
+
+std::optional<Militia_plan> Militia_analyzer::search_plan(const Generals* target) const noexcept {
+    logger.log(LOG_LEVEL_DEBUG, "Searching for plan for %s", target->position.str().c_str());
+    Dist_map target_dist(state, target->position, Path_find_config(2.0)); // 以沙漠为2格计算余量
+
+    // 将根据地从近到远排序
+    std::vector<Militia_dist_info> dist_info;
+    for (const Militia_area& area : areas) {
+        // 对每一个根据地计算最近点
+        Coord clostest_point;
+        int min_dist = std::numeric_limits<int>::max();
+        for (int x = 0; x < Constant::col; ++x) for (int y = 0; y < Constant::row; ++y) {
+            Coord coord(x, y);
+            if (area[coord] && target_dist[coord] < min_dist) {
+                clostest_point = coord;
+                min_dist = target_dist[coord];
+            }
+        }
+
+        if (min_dist >= Dist_map::MAX_DIST) continue;
+        dist_info.emplace_back(min_dist, clostest_point, &area);
+    }
+    std::sort(dist_info.begin(), dist_info.end());
+
+    // 开始寻找方案
+    int enemy_army = state[target->position].army;
+    for (const Militia_dist_info& info : dist_info) {
+        const Militia_area& area = *info.area;
+        int army_required = enemy_army + info.dist;
+
+        logger.log(LOG_LEVEL_DEBUG, "Searching for plan at %s with area %d and max army %d, required army %d", info.clostest_point.str().c_str(), area.area, area.max_army, army_required);
+        if (area.max_army < army_required) continue; // 兵力不足
+
+        // 计算方案：兵力汇集到最近点处
+        Militia_plan plan(target, *info.area, calc_gather_plan(info, army_required), army_required);
+        assert(!plan.plan.empty());
+
+        // 再从集合点处走到目标点
+        std::vector<Coord> path = target_dist.path_to_origin(info.clostest_point);
+        for (int i = 1, siz = path.size(); i < siz; ++i) plan.plan.emplace_back(path[i-1], from_coord(path[i-1], path[i]));
+
+        logger.log(LOG_LEVEL_INFO, "Plan found with %d steps: %d gathers, %d moves", plan.plan.size(), plan.gather_steps, plan.plan.size() - plan.gather_steps);
+        for (const auto& op : plan.plan) logger.log(LOG_LEVEL_INFO, "\t%s->%s", op.first.str().c_str(), (op.first + DIRECTION_ARR[op.second]).str().c_str());
+
+        return plan;
+    }
+    return std::nullopt;
+}
+
+void Militia_analyzer::analyzer_dfs(const Coord& coord) noexcept {
+    vis[coord.x][coord.y] = true;
+    areas.back().area++;
+    areas.back()[coord] = true;
+    areas.back().max_army += state[coord].army - 1;
+
+    for (const Coord& dir : DIRECTION_ARR) {
+        Coord next_pos = coord + dir;
+        if (!next_pos.in_map() || vis[next_pos.x][next_pos.y]) continue;
+        if (state[next_pos].player != my_seat) continue;
+
+        const Generals* generals = state[next_pos].generals;
+        if (generals != nullptr && dynamic_cast<const MainGenerals*>(generals)) continue; // 不动主将
+
+        analyzer_dfs(next_pos);
+    }
+}
+
+std::vector<std::pair<Coord, Direction>> Militia_analyzer::calc_gather_plan(const Militia_dist_info& info, int required_army) const noexcept {
+    static std::vector<std::pair<Coord, Direction>> plan;
+    const Militia_area& area = *info.area;
+
+    // 优先对士兵多的格子进行BFS直至满足要求
+    int total_army = 0;
+    plan.clear();
+    memset(vis, 0, sizeof(vis));
+    std::priority_queue<__Queue_Node> queue;
+    queue.emplace(info.clostest_point, state[info.clostest_point].army - 1, static_cast<Direction>(-1));
+
+    while (!queue.empty()) {
+        __Queue_Node node = queue.top();
+        const Coord& coord = node.coord;
+        queue.pop();
+
+        // 记录访问信息
+        if (vis[coord.x][coord.y]) continue;
+        vis[coord.x][coord.y] = true;
+
+        // 更新统计信息并生成行动
+        total_army += node.army;
+        if (node.dir >= 0) plan.emplace_back(coord, dir_reverse(node.dir));
+
+        if (total_army >= required_army) break;
+
+        // 扩展周围格子
+        for (int dir = 0; dir < DIRECTION_COUNT; ++dir) {
+            Coord next_pos = coord + DIRECTION_ARR[dir];
+            if (!next_pos.in_map() || !area[next_pos] || vis[next_pos.x][next_pos.y]) continue;
+            queue.emplace(next_pos, state[next_pos].army - 1, static_cast<Direction>(dir));
+        }
+    }
+    if (total_army < required_army) return {}; // 兵力不足
+
+    std::reverse(plan.begin(), plan.end());
+    return plan;
 }
