@@ -98,8 +98,8 @@ bool GameController::execute_single_command(int player, const Operation &op)
         // 移动军队
         case OperationType::MOVE_ARMY:
             if (params[3] > game_state[{params[0], params[1]}].army - 1) {
-                logger.log(LOG_LEVEL_ERROR, "Invalid army count for enemy op MOVE_ARMY: %s %d %d, truncated",
-                           Coord(params[0], params[1]).str().c_str(), params[2], params[3]);
+                logger.log(LOG_LEVEL_ERROR, "Invalid army count for op MOVE_ARMY: %s %d %d, truncated to %d",
+                           Coord(params[0], params[1]).str().c_str(), params[2], params[3], game_state[{params[0], params[1]}].army - 1);
                 params[3] = game_state[{params[0], params[1]}].army - 1;
             }
             return army_move({params[0], params[1]}, game_state, player, static_cast<Direction>(params[2] - 1), params[3]);
