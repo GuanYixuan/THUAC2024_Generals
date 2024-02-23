@@ -39,7 +39,7 @@ class GameController
 {
 public:
     GameState game_state;                     // 游戏状态，一个 GameState 类的对象。
-    std::vector<Operation> my_operation_list; // 我方未发送的操作列表。
+
 
     void init();
     bool execute_single_command(int player, const Operation &op);
@@ -64,8 +64,20 @@ public:
      * @note 此方法断言所有敌方操作合法
      */
     void read_and_apply_enemy_ops() { apply_enemy_ops(read_enemy_operations()); }
+
+    // 向动作列表中添加并立即执行一个操作
+    void add_operation(const Operation &op) {
+        my_operation_list.push_back(op);
+
+        // 立即应用操作
+        bool valid = execute_single_command(my_seat, op);
+        if (!valid) throw std::runtime_error("Applied invalid operation: " + op.str());
+    }
+
+    // 我方等待发送的操作列表
+    std::vector<Operation> my_operation_list;
     // 结束我方操作回合，将操作列表打包发送并清空
-    void finish_and_send_our_ops();
+    void send_ops();
 };
 
 /* #### `bool execute_single_command(int player, const Operation &op)`
@@ -169,15 +181,9 @@ void GameController::init()
     std::tie(my_seat, game_state) = read_init_map();
 }
 
-void GameController::finish_and_send_our_ops() {
-    // 应用我方操作
-    logger.log(LOG_LEVEL_INFO, "Applying our ops:");
-    for (const Operation &op : my_operation_list) {
-        bool valid = execute_single_command(my_seat, op);
-
-        logger.log(LOG_LEVEL_INFO, "\tOp: %s", op.str().c_str());
-        if (!valid) throw std::runtime_error("Sending invalid operation: " + op.str());
-    }
+void GameController::send_ops() {
+    logger.log(LOG_LEVEL_INFO, "Sending ops:");
+    for (const Operation &op : my_operation_list) logger.log(LOG_LEVEL_INFO, "\tOp: %s", op.str().c_str());
 
     // 结束我方操作回合，将操作列表打包发送并清空。
     std::string msg = "";

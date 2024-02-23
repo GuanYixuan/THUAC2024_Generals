@@ -96,7 +96,7 @@ public:
         if (game_state.round == 1) {
             logger.log(LOG_LEVEL_INFO, "Seat %d\n", my_seat);
 
-            my_operation_list.push_back(Operation::upgrade_generals(my_seat, QualityType::PRODUCTION));
+            add_operation(Operation::upgrade_generals(my_seat, QualityType::PRODUCTION));
 
             std::vector<Oil_cluster> clusters{identify_oil_clusters()};
             if (!clusters.empty()) {
@@ -119,7 +119,7 @@ public:
             logger.log(LOG_LEVEL_INFO, "Critical tactic found");
             for (const Operation& op : *ret) {
                 logger.log(LOG_LEVEL_INFO, "\t Op: %s", op.str().c_str());
-                my_operation_list.push_back(op);
+                add_operation(op);
             }
             return;
         }
@@ -145,7 +145,7 @@ public:
                 // 给出操作
                 main_process();
                 // 向judger发送操作
-                finish_and_send_our_ops();
+                send_ops();
                 // 读取并应用敌方操作
                 read_and_apply_enemy_ops();
                 // 更新回合
@@ -159,7 +159,7 @@ public:
                 // 给出操作
                 main_process();
                 // 向judger发送操作
-                finish_and_send_our_ops();
+                send_ops();
                 // 更新回合
                 game_state.update_round();
                 logger.round = game_state.round;
@@ -255,7 +255,7 @@ private:
                     min_dist = std::min(min_dist, dist_map[enemy->position]);
                 }
                 if (min_dist >= (tire == 0 ? 10 : 12)) {
-                    my_operation_list.push_back(Operation::upgrade_generals(well->id, QualityType::PRODUCTION));
+                    add_operation(Operation::upgrade_generals(well->id, QualityType::PRODUCTION));
                     oil_after_op -= Constant::OILWELL_PRODUCTION_COST[0];
                     oil_on_approach -= Constant::OILWELL_PRODUCTION_COST[0];
                     break;
@@ -266,7 +266,7 @@ private:
         // 注意：以下升级每回合至多进行一个
         // 主将产量升级
         if (oil_on_approach >= oil_savings + main_general->production_upgrade_cost()) {
-            my_operation_list.push_back(Operation::upgrade_generals(my_seat, QualityType::PRODUCTION));
+            add_operation(Operation::upgrade_generals(my_seat, QualityType::PRODUCTION));
 
             oil_after_op -= main_general->production_upgrade_cost();
         }
@@ -274,17 +274,17 @@ private:
         else if (oil_on_approach >= oil_savings + main_general->defence_upgrade_cost() && main_general->defence_level < 2 &&
                  game_state[main_general->position].army > 40) {
 
-            my_operation_list.push_back(Operation::upgrade_generals(my_seat, QualityType::DEFENCE));
+            add_operation(Operation::upgrade_generals(my_seat, QualityType::DEFENCE));
             oil_after_op -= main_general->defence_upgrade_cost();
         }
 
         // 足够有钱则升级移动力
         else if (game_state.tech_level[my_seat][static_cast<int>(TechType::MOBILITY)] == Constant::PLAYER_MOVEMENT_VALUES[0] && oil_on_approach >= oil_savings + Constant::PLAYER_MOVEMENT_COST[0]) {
-            my_operation_list.push_back(Operation::upgrade_tech(TechType::MOBILITY));
+            add_operation(Operation::upgrade_tech(TechType::MOBILITY));
             oil_after_op -= Constant::PLAYER_MOVEMENT_COST[0];
         }
         else if (game_state.tech_level[my_seat][static_cast<int>(TechType::MOBILITY)] == Constant::PLAYER_MOVEMENT_VALUES[1] && oil_on_approach >= oil_savings + Constant::PLAYER_MOVEMENT_COST[1]) {
-            my_operation_list.push_back(Operation::upgrade_tech(TechType::MOBILITY));
+            add_operation(Operation::upgrade_tech(TechType::MOBILITY));
             oil_after_op -= Constant::PLAYER_MOVEMENT_COST[1];
         }
     }
@@ -460,21 +460,21 @@ private:
                     if (next_pos == target || curr_army <= 1) logger.log(LOG_LEVEL_INFO, "\t[Defend] General stay at %s", general->position.str().c_str());
                     else if (curr_army - 1 > (next_cell.player == my_seat ? 0 : next_cell_army)) {
                         logger.log(LOG_LEVEL_INFO, "\t[Defend] General at %s -> %s", general->position.str().c_str(), next_pos.str().c_str());
-                        my_operation_list.push_back(Operation::move_army(general->position, dir, curr_army - 1));
-                        my_operation_list.push_back(Operation::move_generals(strategy.general_id, next_pos));
+                        add_operation(Operation::move_army(general->position, dir, curr_army - 1));
+                        add_operation(Operation::move_generals(strategy.general_id, next_pos));
                         remain_move_count -= 1;
                     }
                 } else { // OCCUPY
                     logger.log(LOG_LEVEL_INFO, "\t[Occupy] General at %s -> %s", general->position.str().c_str(), next_pos.str().c_str());
                     if (next_pos == target) {
                         if (curr_army - 1 > next_cell_army) {
-                            my_operation_list.push_back(Operation::move_army(general->position, dir, next_cell_army + 1));
+                            add_operation(Operation::move_army(general->position, dir, next_cell_army + 1));
                             remain_move_count -= 1;
                         }
                     } else {
                         if (curr_army > 1 && (curr_army - 1 > (next_cell.player == my_seat ? 0 : next_cell.army))) {
-                            my_operation_list.push_back(Operation::move_army(general->position, dir, curr_army - 1));
-                            my_operation_list.push_back(Operation::move_generals(strategy.general_id, next_pos));
+                            add_operation(Operation::move_army(general->position, dir, curr_army - 1));
+                            add_operation(Operation::move_generals(strategy.general_id, next_pos));
                             remain_move_count -= 1;
                         }
                     }
@@ -482,7 +482,6 @@ private:
             } else if (strategy.type == General_strategy_type::ATTACK) {
 
             } else if (strategy.type == General_strategy_type::RETREAT) {
-                logger.log(LOG_LEVEL_INFO, "General %d retreating", strategy.general_id);
                 const Generals* enemy = strategy.target.general;
                 const Critical_tactic* tactic = strategy.target.danger->tactic;
 
@@ -505,10 +504,10 @@ private:
                 // 尝试移动（没有检查兵数的问题）
                 if (best_pos.in_map()) {
                     if (curr_army > 1) {
-                        my_operation_list.push_back(Operation::move_army(general->position, from_coord(general->position, best_pos), curr_army - 1));
+                        add_operation(Operation::move_army(general->position, from_coord(general->position, best_pos), curr_army - 1));
                         remain_move_count -= 1;
                     }
-                    my_operation_list.push_back(Operation::move_generals(strategy.general_id, best_pos));
+                    add_operation(Operation::move_generals(strategy.general_id, best_pos));
                     logger.log(LOG_LEVEL_INFO, "General at %s -> %s, dist -> %d", general->position.str().c_str(), best_pos.str().c_str(), max_eff_dist);
                 }
             } else assert(!"Invalid strategy type");
@@ -574,7 +573,7 @@ private:
 
                     // 进行移动
                     logger.log(LOG_LEVEL_INFO, "[Militia] Expanding to %s", next_pos.str().c_str());
-                    my_operation_list.push_back(Operation::move_army(pos, static_cast<Direction>(dir), cell.army - 1));
+                    add_operation(Operation::move_army(pos, static_cast<Direction>(dir), cell.army - 1));
                     remain_move_count -= 1;
                     break;
                 }
@@ -585,13 +584,15 @@ private:
                 // 一些初步检查
                 const Coord& pos = militia_plan->plan[next_action_index].first;
                 const Cell& cell = game_state[pos];
-                if (cell.player != my_seat || cell.army <= 1) {
+                const OilWell* well = dynamic_cast<const OilWell*>(cell.generals);
+
+                if (cell.player != my_seat || cell.army <= 1 || (cell.generals && !well)) {
                     militia_plan.reset();
                     break;
                 }
 
                 logger.log(LOG_LEVEL_INFO, "[Militia] Executing plan step %d, %s->%s", next_action_index+1, pos.str().c_str(), (pos + DIRECTION_ARR[militia_plan->plan[next_action_index].second]).str().c_str());
-                my_operation_list.push_back(Operation::move_army(pos, militia_plan->plan[next_action_index].second, cell.army - 1));
+                add_operation(Operation::move_army(pos, militia_plan->plan[next_action_index].second, cell.army - 1));
                 remain_move_count -= 1;
                 next_action_index += 1;
             }
