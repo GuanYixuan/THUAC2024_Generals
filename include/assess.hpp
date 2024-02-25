@@ -61,7 +61,7 @@ public:
     std::vector<Coord> path_to_origin(const Coord& pos) const noexcept;
 
     // 不考虑地形地计算`pos`到某个将领坐标`general_pos`的有效距离，以0为恰好安全
-    static int effect_dist(const Coord& pos, const Coord& general_pos, bool can_rush, int movement_val = PLAYER_MOVEMENT_VALUES[0]) noexcept;
+    static int effect_dist(const Coord& pos, const Coord& general_pos, bool can_rush, int movement_val) noexcept;
 
     // 构造函数，暂且把计算也写在这里
     Dist_map(const GameState& board, const Coord& origin, const Path_find_config& cfg) noexcept;
@@ -100,12 +100,14 @@ struct Base_tactic {
         return std::max(std::max(strike_count, std::max(command_count, weaken_count)), 1) - 1;
     }
 };
-// 不考虑rush情形下耗油量不超过180的几种固定连招，按`required_oil`排序
+// 不考虑rush情形下 耗油量不超过250且召唤副将数不超过2 的固定连招，按`required_oil`排序
 constexpr Base_tactic BASE_TACTICS[] = {
     {0, 0, 0}, {1, 0, 0}, {0, 1, 0}, {1, 1, 0}, {0, 1, 1},
     {1, 1, 1}, {2, 0, 0}, {0, 2, 0}, {2, 1, 0}, {1, 2, 0},
     {0, 2, 1}, {2, 2, 0}, {3, 0, 0}, {1, 2, 1}, {0, 2, 2},
-    {2, 2, 1}, {3, 1, 0},
+    {2, 2, 1}, {3, 1, 0}, {1, 2, 2}, {0, 3, 0}, {2, 2, 2},
+    {1, 3, 0}, {3, 2, 0}, {0, 3, 1}, {2, 3, 0}, {1, 3, 1},
+    {3, 3, 0}, {0, 3, 2}, {2, 3, 1},
 };
 
 struct Critical_tactic : public Base_tactic {
@@ -421,7 +423,6 @@ std::optional<std::vector<Operation>> Attack_searcher::search() const noexcept {
                         }
 
                         army_left.push_back(std::ceil(vs / local_attack_mult));
-                        logger.log(LOG_LEVEL_DEBUG, "\tArmy left %d when walked to [%d]%s", army_left.back(), j, to.str().c_str());
                     }
                     if (j == 1 && tactic.can_rush) attack_ops.push_back(Operation::generals_skill(general->id, SkillType::RUSH, to));
                     else attack_ops.push_back(Operation::move_army(from, from_coord(from, to), army_left[j-1] - 1));
@@ -432,13 +433,18 @@ std::optional<std::vector<Operation>> Attack_searcher::search() const noexcept {
                 int spawn_count = tactic.spawn_count();
                 std::vector<Coord> spawn_points;
                 if (spawn_count) {
-                    int placed = 0;
-                    for (int x = std::max(enemy_general->position.x - Constant::GENERAL_ATTACK_RADIUS, 0); x <= std::min(enemy_general->position.x + Constant::GENERAL_ATTACK_RADIUS, Constant::col - 1); ++x) {
-                        for (int y = std::max(enemy_general->position.y - Constant::GENERAL_ATTACK_RADIUS, 0); y <= std::min(enemy_general->position.y + Constant::GENERAL_ATTACK_RADIUS, Constant::row - 1); ++y) {
+                    bool subgeneral_covers_enemy = (spawn_count + 1 == tactic.strike_count) || (spawn_count + 1 == tactic.weaken_count);
+                    Coord search_core = path[path.size() - 2]; // 最后一步的前一个格子（即进攻敌方主将前，我方士兵所在格）
+                    for (int x = std::max(search_core.x - Constant::GENERAL_ATTACK_RADIUS, 0); x <= std::min(search_core.x + Constant::GENERAL_ATTACK_RADIUS, Constant::col - 1); ++x) {
+                        for (int y = std::max(search_core.y - Constant::GENERAL_ATTACK_RADIUS, 0); y <= std::min(search_core.y + Constant::GENERAL_ATTACK_RADIUS, Constant::row - 1); ++y) {
                             Coord pos(x, y);
-                            bool can_place = (tactic.can_rush && pos == path.front()); // 我方主将原本所在格
+                            if (subgeneral_covers_enemy && !pos.in_attack_range(enemy_general->position)) continue;
+
+                            bool walk_pass = false;
+                            for (int k = 0, skz = path.size(); k < skz; ++k) if (path[k] == pos) walk_pass = true;
+
+                            bool can_place = (walk_pass && state[pos].generals == nullptr && pos != landing_point); // 途中经过的格子（包括主将原有占领格）
                             can_place |= (state[pos].player == attacker_seat && state[pos].generals == nullptr && pos != landing_point); // 原本就是我方占领格
-                            // TODO: 或是途中经过的格子
 
                             if (can_place) spawn_points.push_back(pos);
                             if (spawn_points.size() >= spawn_count) break;
@@ -446,7 +452,10 @@ std::optional<std::vector<Operation>> Attack_searcher::search() const noexcept {
                         if (spawn_points.size() >= spawn_count) break;
                     }
                 }
-                if (spawn_count) logger.log(LOG_LEVEL_DEBUG, "Can spawn at %d places", spawn_points.size());
+                if (spawn_count) {
+                    logger.log(LOG_LEVEL_DEBUG, "Can spawn at %d places:", spawn_points.size());
+                    for (const Coord& spawn_point : spawn_points) logger.log(LOG_LEVEL_DEBUG, "\t%s", spawn_point.str().c_str());
+                }
                 if (spawn_points.size() < spawn_count) continue;
 
                 // 可攻击，准备导出行动
@@ -460,18 +469,18 @@ std::optional<std::vector<Operation>> Attack_searcher::search() const noexcept {
                 if (tactic.strike_count) attack_ops.insert(attack_ops.begin() + (attack_ops.size() - 1), Operation::generals_skill(general->id, SkillType::STRIKE, enemy_general->position));
 
                 Base_tactic remain_skills = base_tactic;
-                for (const Coord& spawn_point : spawn_points) {
-                    attack_ops.insert(attack_ops.begin() + (attack_ops.size() - 1), Operation::recruit_generals(spawn_point));
+                for (int spawn_index = 0; spawn_index < spawn_count; ++spawn_index) {
+                    attack_ops.insert(attack_ops.begin() + (attack_ops.size() - 1), Operation::recruit_generals(spawn_points[spawn_index]));
                     if (remain_skills.strike_count > 1) {
-                        attack_ops.insert(attack_ops.begin() + (attack_ops.size() - 1), Operation::generals_skill(state.next_generals_id, SkillType::STRIKE, enemy_general->position));
+                        attack_ops.insert(attack_ops.begin() + (attack_ops.size() - 1), Operation::generals_skill(state.next_generals_id + spawn_index, SkillType::STRIKE, enemy_general->position));
                         remain_skills.strike_count--;
                     }
                     if (remain_skills.command_count > 1) {
-                        attack_ops.insert(attack_ops.begin() + (attack_ops.size() - 1), Operation::generals_skill(state.next_generals_id, SkillType::COMMAND));
+                        attack_ops.insert(attack_ops.begin() + (attack_ops.size() - 1), Operation::generals_skill(state.next_generals_id + spawn_index, SkillType::COMMAND));
                         remain_skills.command_count--;
                     }
                     if (remain_skills.weaken_count > 1) {
-                        attack_ops.insert(attack_ops.begin() + (attack_ops.size() - 1), Operation::generals_skill(state.next_generals_id, SkillType::WEAKEN));
+                        attack_ops.insert(attack_ops.begin() + (attack_ops.size() - 1), Operation::generals_skill(state.next_generals_id + spawn_index, SkillType::WEAKEN));
                         remain_skills.weaken_count--;
                     }
                 }
@@ -540,9 +549,6 @@ std::optional<Militia_plan> Militia_analyzer::search_plan(const Generals* target
         // 再从集合点处走到目标点
         std::vector<Coord> path = target_dist.path_to_origin(info.clostest_point);
         for (int i = 1, siz = path.size(); i < siz; ++i) plan.plan.emplace_back(path[i-1], from_coord(path[i-1], path[i]));
-
-        logger.log(LOG_LEVEL_INFO, "Plan found with %d steps: %d gathers, %d moves", plan.plan.size(), plan.gather_steps, plan.plan.size() - plan.gather_steps);
-        for (const auto& op : plan.plan) logger.log(LOG_LEVEL_INFO, "\t%s->%s", op.first.str().c_str(), (op.first + DIRECTION_ARR[op.second]).str().c_str());
 
         return plan;
     }
