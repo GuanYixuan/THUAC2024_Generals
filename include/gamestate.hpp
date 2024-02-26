@@ -41,7 +41,7 @@ public:
 
     // 判断此坐标是否在地图范围内
     constexpr bool in_map() const noexcept {
-        return 0 <= x && x < Constant::row && 0 <= y && y < Constant::col;
+        return 0 <= x && x < Constant::col && 0 <= y && y < Constant::row;
     }
     // 判断`target`是否在此处将领的攻击范围内
     constexpr bool in_attack_range(const Coord& target) const noexcept {
@@ -478,6 +478,17 @@ public:
 
     // 获取指定玩家的行动力
     int get_mobility(int player) const noexcept { return tech_level[player][static_cast<int>(TechType::MOBILITY)]; }
+    // 获取指定玩家的行动力等级（0-index）
+    int get_mobility_tire(int player) const noexcept {
+        switch (get_mobility(player)) {
+            case PLAYER_MOVEMENT_VALUES[0]: return 0;
+            case PLAYER_MOVEMENT_VALUES[1]: return 1;
+            case PLAYER_MOVEMENT_VALUES[2]: return 2;
+            default:
+                assert(!"Invalid player mobility level");
+                return 0;
+        }
+    }
     // 计算指定玩家每回合的石油产量
     int calc_oil_production(int player) const noexcept;
 

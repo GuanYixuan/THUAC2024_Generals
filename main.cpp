@@ -106,11 +106,24 @@ public:
             return;
         }
 
+        const MainGenerals* main_general = dynamic_cast<const MainGenerals*>(game_state.generals[my_seat]);
+        const MainGenerals* enemy_general = dynamic_cast<const MainGenerals*>(game_state.generals[1 - my_seat]);
+
         // 参数更新
         oil_after_op = game_state.coin[my_seat];
-        if (game_state.round > 15) oil_savings = 35;
-        else oil_savings = 20;
         remain_move_count = game_state.rest_move_step[my_seat];
+        int oil_production = game_state.calc_oil_production(my_seat);
+
+        // 计算油量目标值
+        if (game_state.round > 15 || game_state[main_general->position].army < game_state[enemy_general->position].army)
+            oil_savings = 35;
+        else oil_savings = 20;
+        if (game_state.round > 20) {
+            Deterrence_analyzer analyzer(main_general, enemy_general, oil_after_op, game_state);
+            if (oil_after_op + oil_production * 9 >= analyzer.min_oil) oil_savings = std::max(oil_savings, analyzer.min_oil);
+        }
+        logger.log(LOG_LEVEL_INFO, "Oil %d(+%d) vs %d(+%d), savings %d",
+                   oil_after_op, oil_production, game_state.coin[1 - my_seat], game_state.calc_oil_production(1 - my_seat), oil_savings);
 
         // 进攻搜索
         Attack_searcher searcher(my_seat, game_state);
@@ -170,7 +183,7 @@ public:
 private:
     std::vector<Oil_cluster> identify_oil_clusters() const {
         static constexpr double MIN_ENEMY_DIST = 7.0;
-        static constexpr double MAX_DIST = 7.0;
+        static constexpr double MAX_DIST = 5.0;
 
         static constexpr int MIN_CLUSTER_SIZE = 3;
 
@@ -232,15 +245,15 @@ private:
         logger.log(LOG_LEVEL_INFO, "[Assess] Approach time: %d, oil on approach: %d", approach_time, oil_on_approach);
 
         // 考虑油井升级
-        int unlock_upgrade_2 = main_general->produce_level >= Constant::GENERAL_PRODUCTION_VALUES[2] &&
-                               main_general->defence_level >= Constant::GENERAL_DEFENCE_VALUES[1];
+        bool unlock_upgrade_2 = main_general->produce_level >= Constant::GENERAL_PRODUCTION_VALUES[2];
+        bool unlock_upgrade_3 = unlock_upgrade_2 && main_general->defence_level >= Constant::GENERAL_DEFENCE_VALUES[1];
         for (int i = 0, siz = game_state.generals.size(); i < siz; ++i) {
             const OilWell* well = dynamic_cast<const OilWell*>(game_state.generals[i]);
             if (well == nullptr || well->player != my_seat) continue;
 
             int tire = well->production_tire();
             int cost = well->production_upgrade_cost();
-            if (tire >= 2 || (tire == 1 && !unlock_upgrade_2)) continue;
+            if ((tire >= 1 && !unlock_upgrade_2) || (tire >= 2 && !unlock_upgrade_3)) continue;
             if (oil_after_op < oil_savings + cost ||
                 oil_on_approach + (Constant::OILWELL_PRODUCTION_VALUES[tire + 1] - Constant::OILWELL_PRODUCTION_VALUES[tire]) * approach_time < oil_savings + cost) continue;
 
@@ -251,7 +264,7 @@ private:
                 if (enemy->player != 1 - my_seat || dynamic_cast<const OilWell*>(enemy) != nullptr) continue;
                 min_dist = std::min(min_dist, dist_map[enemy->position]);
             }
-            if (min_dist >= (tire == 0 ? 10 : 12)) {
+            if (min_dist >= 6 + 3 * tire) {
                 add_operation(Operation::upgrade_generals(well->id, QualityType::PRODUCTION));
                 oil_after_op -= Constant::OILWELL_PRODUCTION_COST[tire];
                 oil_on_approach -= Constant::OILWELL_PRODUCTION_COST[tire];
@@ -260,6 +273,7 @@ private:
         }
 
         // 注意：以下升级每回合至多进行一个
+        int mob_tire = game_state.get_mobility_tire(my_seat);
         // 主将产量升级
         if (oil_after_op >= main_general->production_upgrade_cost() &&
             oil_on_approach >= oil_savings + main_general->production_upgrade_cost()) {
@@ -274,6 +288,13 @@ private:
 
             oil_after_op -= main_general->defence_upgrade_cost();
             add_operation(Operation::upgrade_generals(my_seat, QualityType::DEFENCE));
+        }
+        // 油足够多，则考虑升级行动力
+        else if (oil_after_op >= PLAYER_MOVEMENT_COST[mob_tire] &&
+                 oil_on_approach >= oil_savings + 100 + PLAYER_MOVEMENT_COST[mob_tire]) {
+
+            oil_after_op -= PLAYER_MOVEMENT_COST[mob_tire];
+            add_operation(Operation::upgrade_tech(TechType::MOBILITY));
         }
     }
 
@@ -314,9 +335,6 @@ private:
                     attack_multiplier *= pow(Constant::GENERAL_SKILL_EFFECT[SkillType::WEAKEN], -base_tactic.weaken_count); // 注意是负数次幂
 
                     int effective_army = std::max(0, curr_army - (base_tactic.strike_count * Constant::STRIKE_DAMAGE));
-                    logger.log(LOG_LEVEL_DEBUG, "[Assess] \t[%s]: atk %d * %.2f = %.2f vs def %d * %.2f = %.2f", tactic.str().c_str(),
-                               effective_army, attack_multiplier, effective_army * attack_multiplier,
-                               enemy_army, defence_mult, enemy_army * defence_mult);
                     if ((enemy_army * attack_multiplier <= effective_army * defence_mult) &&
                         (enemy_army + enemy->produce_level) * attack_multiplier <= (effective_army + general->produce_level) * defence_mult) continue; // 1回合 lookahead
 
@@ -324,7 +342,6 @@ private:
                     tactic.can_rush &= (enemy_lookahead_oil >= tactic.required_oil);
                     int effect_dist = Dist_map::effect_dist(general->position, enemy->position, tactic.can_rush, game_state.get_mobility(1-my_seat));
                     Danger new_danger{effect_dist, enemy, tactic};
-                    logger.log(LOG_LEVEL_DEBUG, "[Assess] \t[%s]: effect dist %d", tactic.str().c_str(), effect_dist);
                     if (new_danger > most_danger) {
                         most_danger = new_danger;
                         if (effect_dist < 0)
@@ -383,7 +400,7 @@ private:
             if (cluster) {
                 bool found = false;
                 for (const OilWell* well : cluster->wells) {
-                    if (game_state[well->position].player != my_seat && dist_map[well->position] < 1e8) {
+                    if (game_state[well->position].player != my_seat && dist_map[well->position] < Dist_map::MAX_DIST) {
                         strategies.emplace_back(General_strategy{i, General_strategy_type::OCCUPY, Strategy_target{well->position, most_danger}});
                         logger.log(LOG_LEVEL_INFO, "[Allocate] General %s -> well %s (cluster)", general->position.str().c_str(), well->position.str().c_str());
                         found = true;
@@ -394,7 +411,7 @@ private:
             }
 
             // 否则取最近油田
-            if (best_well == -1 || dist_map[game_state.generals[best_well]->position] > 1e8)
+            if (best_well == -1 || dist_map[game_state.generals[best_well]->position] > Dist_map::MAX_DIST)
                 logger.log(LOG_LEVEL_WARN, "[Allocate] No oil well found for general at %s", general->position.str().c_str());
             else {
                 strategies.emplace_back(General_strategy{i, General_strategy_type::OCCUPY, Strategy_target{game_state.generals[best_well]->position, most_danger}});
@@ -455,14 +472,14 @@ private:
 
                 // 寻找能走到的最大有效距离
                 Coord best_pos{-1, -1};
-                int max_eff_dist = Dist_map::effect_dist(general->position, enemy->position, tactic.can_rush);
+                int max_eff_dist = Dist_map::effect_dist(general->position, enemy->position, tactic.can_rush, game_state.get_mobility(1-my_seat));
                 for (int dir = 0; dir < DIRECTION_COUNT; ++dir) {
                     Coord next_pos = general->position + DIRECTION_ARR[dir];
                     if (!next_pos.in_map() || !game_state.can_general_step_on(next_pos, my_seat)) continue;
                     if (curr_army - 1 <= -game_state.eff_army(next_pos, my_seat)) continue;
 
-                    int eff_dist = Dist_map::effect_dist(next_pos, enemy->position, tactic.can_rush);
-                    logger.log(LOG_LEVEL_DEBUG, "[Retreat] \tNext pos %s, eff dist %d", next_pos.str().c_str(), eff_dist);
+                    int eff_dist = Dist_map::effect_dist(next_pos, enemy->position, tactic.can_rush, game_state.get_mobility(1-my_seat));
+                    logger.log(LOG_LEVEL_INFO, "[Retreat] \tNext pos %s, eff dist %d", next_pos.str().c_str(), eff_dist);
                     if (eff_dist > max_eff_dist) {
                         best_pos = next_pos;
                         max_eff_dist = eff_dist;
@@ -489,18 +506,21 @@ private:
         }
     }
 
-    int next_action_index = 0;
-    std::optional<Militia_plan> militia_plan;
     void militia_move() {
+        static int next_action_index = 0;
+        static std::optional<Militia_plan> militia_plan;
+
+        if (militia_plan && next_action_index >= (int)militia_plan->plan.size()) militia_plan.reset();
+
         // 10回合分析一次
-        if (game_state.round % 10 == 1) {
+        if (game_state.round % 10 == 1 || !militia_plan) {
             Militia_analyzer analyzer(game_state);
 
             // 寻找总时长尽量小的方案，且要求集合用时不超过7步
             std::optional<Militia_plan> best_plan;
             for (int i = 0, siz = game_state.generals.size(); i < siz; ++i) {
                 const OilWell* well = dynamic_cast<const OilWell*>(game_state.generals[i]);
-                if (well == nullptr || well->player != -1 || !game_state.can_soldier_step_on(well->position, my_seat)) continue;
+                if (well == nullptr || well->player == my_seat || !game_state.can_soldier_step_on(well->position, my_seat)) continue;
 
                 std::optional<Militia_plan> plan = analyzer.search_plan(well);
                 if (!plan || plan->gather_steps > 7) continue;
@@ -528,7 +548,7 @@ private:
 
         // 执行计划
         if (!remain_move_count) return;
-        if (!militia_plan || next_action_index >= militia_plan->plan.size()) { // 任务已完成
+        if (!militia_plan) { // 无任务
             // 寻找可扩展的格子
             for (int x = 0; x < Constant::col; ++x) for (int y = 0; y < Constant::row; ++y) {
                 Coord pos{x, y};
@@ -555,7 +575,7 @@ private:
                 if (!remain_move_count) return;
             }
         } else {
-            while (remain_move_count && next_action_index < militia_plan->plan.size()) {
+            while (remain_move_count && next_action_index < (int)militia_plan->plan.size()) {
                 // 一些初步检查
                 const Coord& pos = militia_plan->plan[next_action_index].first;
                 const Cell& cell = game_state[pos];

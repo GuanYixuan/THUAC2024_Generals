@@ -34,7 +34,6 @@ struct Path_find_config {
 class Dist_map {
 public:
     static constexpr double MAX_DIST = 1000 * col * row;
-    static constexpr double INF = 1e9;
 
     // 搜索的原点
     const Coord origin;
@@ -151,7 +150,7 @@ public:
     // 当前情况下的最小耗油rush威慑方案，可能不存在
     std::optional<Critical_tactic> rush_tactic;
 
-    // 构造并进行分析
+    // 构造并进行分析，对`attacker`与`target`同阵营的情况结果可能不正确
     Deterrence_analyzer(const Generals* attacker, const Generals* target, int attacker_oil, const GameState& state) noexcept :
         attacker(attacker), target(target), attacker_oil(attacker_oil) {
 
@@ -160,7 +159,7 @@ public:
 
         int attacker_army = state[attacker->position].army;
         int target_army = state[target->position].army;
-        double def_mult = target->defence_level;
+        double def_mult = state.defence_multiplier(target->position);
         for (const Base_tactic& base : BASE_TACTICS) {
             double atk_mult = pow(GENERAL_SKILL_EFFECT[SkillType::COMMAND], base.command_count) / def_mult;
             atk_mult *= pow(GENERAL_SKILL_EFFECT[SkillType::WEAKEN], -base.weaken_count);
@@ -295,7 +294,7 @@ Dist_map::Dist_map(const GameState& board, const Coord& origin, const Path_find_
     bool vis[col][row];
     double cell_dist[static_cast<int>(CellType::Type_count)] = {1.0, cfg.desert_dist, cfg.swamp_dist};
     std::memset(vis, 0, sizeof(vis));
-    std::fill_n(reinterpret_cast<double*>(dist), col * row, INF);
+    std::fill_n(reinterpret_cast<double*>(dist), col * row, MAX_DIST + 1);
 
     // 单源最短路
     std::priority_queue<__Queue_Node, std::vector<__Queue_Node>, std::greater<__Queue_Node>> queue;
@@ -383,8 +382,6 @@ std::optional<std::vector<Operation>> Attack_searcher::search() const noexcept {
     static std::vector<Operation> attack_ops{};
 
     int oil = state.coin[attacker_seat];
-    logger.log(LOG_LEVEL_DEBUG, "Searching for attack with %d oil", oil);
-
     int my_mobility = state.tech_level[attacker_seat][static_cast<int>(TechType::MOBILITY)];
     const MainGenerals* enemy_general = dynamic_cast<const MainGenerals*>(state.generals[1 - attacker_seat]);
     assert(enemy_general);
@@ -434,7 +431,6 @@ std::optional<std::vector<Operation>> Attack_searcher::search() const noexcept {
             double main_atk_mult = (tactic.command_count ? Constant::GENERAL_SKILL_EFFECT[static_cast<int>(SkillType::COMMAND)] : 1.0); // 由主将带来的攻击倍率
             double main_def_mult = (tactic.weaken_count ? Constant::GENERAL_SKILL_EFFECT[static_cast<int>(SkillType::WEAKEN)] : 1.0);   // 由主将带来的弱化倍率
             for (const Coord& landing_point : landing_points) {
-                logger.log(LOG_LEVEL_DEBUG, "Checking attack with %s, landing at %s", tactic.str().c_str(), landing_point.str().c_str());
                 std::vector<Coord> path{enemy_dist.path_to_origin(landing_point)};
                 if (tactic.can_rush) path.insert(path.begin(), general->position);
 
@@ -450,8 +446,8 @@ std::optional<std::vector<Operation>> Attack_searcher::search() const noexcept {
 
                     if (dest.player == attacker_seat) army_left.push_back(army_left.back() - 1 + dest.army);
                     else {
-                        double local_attack_mult = 1.0;
-                        double local_defence_mult = (dest.generals ? dest.generals->defence_level : 1.0);
+                        double local_attack_mult = state.attack_multiplier(from, attacker_seat);
+                        double local_defence_mult = state.defence_multiplier(to);
 
                         // 假定副将带来的效果仅对敌方主将格有效（这样可以放宽副将位置的限制）
                         if (final_cell && tactic.command_count > 1) local_attack_mult *= pow(Constant::GENERAL_SKILL_EFFECT[static_cast<int>(SkillType::COMMAND)], tactic.command_count - 1);
@@ -499,10 +495,6 @@ std::optional<std::vector<Operation>> Attack_searcher::search() const noexcept {
                         }
                         if ((int)spawn_points.size() >= spawn_count) break;
                     }
-                }
-                if (spawn_count) {
-                    logger.log(LOG_LEVEL_DEBUG, "Can spawn at %d places:", spawn_points.size());
-                    for (const Coord& spawn_point : spawn_points) logger.log(LOG_LEVEL_DEBUG, "\t%s", spawn_point.str().c_str());
                 }
                 if ((int)spawn_points.size() < spawn_count) continue;
 
@@ -554,13 +546,10 @@ Militia_analyzer::Militia_analyzer(const GameState& state) noexcept : state(stat
 
         areas.emplace_back();
         analyzer_dfs(coord);
-
-        logger.log(LOG_LEVEL_DEBUG, "Militia area at %s with area %d and max army %d", coord.str().c_str(), areas.back().area, areas.back().max_army);
     }
 }
 
 std::optional<Militia_plan> Militia_analyzer::search_plan(const Generals* target) const noexcept {
-    logger.log(LOG_LEVEL_DEBUG, "Searching for plan for %s", target->position.str().c_str());
     Dist_map target_dist(state, target->position, Path_find_config(2.0)); // 以沙漠为2格计算余量
 
     // 将根据地从近到远排序
@@ -588,7 +577,6 @@ std::optional<Militia_plan> Militia_analyzer::search_plan(const Generals* target
         const Militia_area& area = *info.area;
         int army_required = enemy_army + info.dist;
 
-        logger.log(LOG_LEVEL_DEBUG, "Searching for plan at %s with area %d and max army %d, required army %d", info.clostest_point.str().c_str(), area.area, area.max_army, army_required);
         if (area.max_army < army_required) continue; // 兵力不足
 
         // 计算方案：兵力汇集到最近点处
