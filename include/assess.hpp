@@ -109,12 +109,12 @@ constexpr Base_tactic BASE_TACTICS[] = {
     {1, 3, 0}, {3, 2, 0}, {0, 3, 1}, {2, 3, 0}, {1, 3, 1},
     {3, 3, 0}, {0, 3, 2}, {2, 3, 1},
 };
-
+// 单将一步杀的不同类型（rush及其耗油在此体现）
 struct Critical_tactic : public Base_tactic {
     bool can_rush;
 
     Critical_tactic(bool can_rush, const Base_tactic& base) noexcept :
-        can_rush(can_rush), Base_tactic(base.strike_count, base.command_count, base.weaken_count) {
+        Base_tactic(base.strike_count, base.command_count, base.weaken_count), can_rush(can_rush) {
 
         required_oil += can_rush * GENERAL_SKILL_COST[SkillType::RUSH];
     }
@@ -130,6 +130,54 @@ struct Critical_tactic : public Base_tactic {
         if (weaken_count > 1) ret += wrap(" x %d", weaken_count);
         return ret;
     }
+};
+
+// 威慑分析器：在不考虑地形、距离与统率等防御效果的前提下分析是否能一回合内俘获某个将领
+class Deterrence_analyzer {
+public:
+    // 威慑者
+    const Generals* attacker;
+    // 被威慑者
+    const Generals* target;
+    // 威慑方的油量
+    int attacker_oil;
+
+    // 在当前兵数下能够建立rush威慑的最小油量
+    int min_oil;
+    // 在当前油量下能够建立rush威慑的最小兵力
+    int min_army;
+    // 当前情况下的最小耗油非rush威慑方案，可能不存在
+    std::optional<Critical_tactic> non_rush_tactic;
+    // 当前情况下的最小耗油rush威慑方案，可能不存在
+    std::optional<Critical_tactic> rush_tactic;
+
+    // 构造并进行分析
+    Deterrence_analyzer(const Generals* attacker, const Generals* target, int attacker_oil, const GameState& state) noexcept :
+        attacker(attacker), target(target), attacker_oil(attacker_oil) {
+
+        min_oil = std::numeric_limits<int>::max();
+        min_army = std::numeric_limits<int>::max();
+
+        int attacker_army = state[attacker->position].army;
+        int target_army = state[target->position].army;
+        double def_mult = target->defence_level;
+        for (const Base_tactic& base : BASE_TACTICS) {
+            double atk_mult = pow(GENERAL_SKILL_EFFECT[SkillType::COMMAND], base.command_count) / def_mult;
+            atk_mult *= pow(GENERAL_SKILL_EFFECT[SkillType::WEAKEN], -base.weaken_count);
+
+            // 能够俘获
+            if (attacker_army * atk_mult > target_army) {
+                min_oil = std::min(min_oil, base.required_oil + GENERAL_SKILL_COST[SkillType::RUSH]);
+                // 检查油量并更新策略
+                if (!non_rush_tactic && attacker_oil >= base.required_oil) non_rush_tactic.emplace(false, base);
+                if (!rush_tactic && attacker_oil >= base.required_oil + GENERAL_SKILL_COST[SkillType::RUSH]) rush_tactic.emplace(true, base);
+            }
+            // 能够负担得起
+            if (attacker_oil >= base.required_oil + GENERAL_SKILL_COST[SkillType::RUSH])
+                min_army = std::min(min_army, (int)std::ceil(target_army / atk_mult));
+        }
+    }
+
 };
 
 // 攻击搜索器
@@ -447,16 +495,16 @@ std::optional<std::vector<Operation>> Attack_searcher::search() const noexcept {
                             can_place |= (state[pos].player == attacker_seat && state[pos].generals == nullptr && pos != landing_point); // 原本就是我方占领格
 
                             if (can_place) spawn_points.push_back(pos);
-                            if (spawn_points.size() >= spawn_count) break;
+                            if ((int)spawn_points.size() >= spawn_count) break;
                         }
-                        if (spawn_points.size() >= spawn_count) break;
+                        if ((int)spawn_points.size() >= spawn_count) break;
                     }
                 }
                 if (spawn_count) {
                     logger.log(LOG_LEVEL_DEBUG, "Can spawn at %d places:", spawn_points.size());
                     for (const Coord& spawn_point : spawn_points) logger.log(LOG_LEVEL_DEBUG, "\t%s", spawn_point.str().c_str());
                 }
-                if (spawn_points.size() < spawn_count) continue;
+                if ((int)spawn_points.size() < spawn_count) continue;
 
                 // 可攻击，准备导出行动
                 logger.log(LOG_LEVEL_INFO, "[%s] Army left %d, path size %d", tactic.str().c_str(), army_left.back(), path.size()-1);

@@ -4,6 +4,7 @@
 #include <string>
 #include <cmath>
 #include <cassert>
+#include <cstring>
 #include <iostream>
 #include <algorithm>
 #include "constant.hpp"
@@ -215,6 +216,7 @@ public:
         id(id), player(player), position(position),
         produce_level(1), defence_level(1), mobility_level(1),
         skills_cd{0}, skill_duration{0}, rest_move(1) {};
+    ~Generals() = default;
 
     // 是否有归属
     bool is_occupied() const noexcept { return player >= 0 && player < PLAYER_COUNT; }
@@ -410,6 +412,34 @@ public:
         super_weapon_unlocked{false, false}, super_weapon_cd{-1, -1},
         tech_level{{2, 0, 0, 0}, {2, 0, 0, 0}}, rest_move_step{2, 2},
         next_generals_id(0), board{} {}
+    // ~GameState() { // 有问题，被controller.hpp:181调用时崩溃
+    //     for (Generals* gen : generals) delete gen;
+    // }
+    // 复制函数，注意复制将会重新生成将领对象以断开拷贝前后对象间的联系
+    GameState& copy_as(const GameState& other) noexcept {
+        if (this == &other) return *this;
+
+        // 复制一份新的将领列表
+        generals.clear();
+        for (const Generals* gen : other.generals) {
+            if (dynamic_cast<const MainGenerals*>(gen)) generals.push_back(new MainGenerals(*static_cast<const MainGenerals*>(gen)));
+            else if (dynamic_cast<const SubGenerals*>(gen)) generals.push_back(new SubGenerals(*static_cast<const SubGenerals*>(gen)));
+            else if (dynamic_cast<const OilWell*>(gen)) generals.push_back(new OilWell(*static_cast<const OilWell*>(gen)));
+            else assert(!"Invalid generals type");
+        }
+
+        // 其余部分直接赋值
+        round = other.round;
+        std::copy(other.coin, other.coin + PLAYER_COUNT, coin);
+        active_super_weapon = other.active_super_weapon;
+        std::copy(other.super_weapon_unlocked, other.super_weapon_unlocked + PLAYER_COUNT, super_weapon_unlocked);
+        std::copy(other.super_weapon_cd, other.super_weapon_cd + PLAYER_COUNT, super_weapon_cd);
+        memcpy(tech_level, other.tech_level, sizeof(tech_level));
+        std::copy(other.rest_move_step, other.rest_move_step + PLAYER_COUNT, rest_move_step);
+        next_generals_id = other.next_generals_id;
+        memcpy(board, other.board, sizeof(board));
+        return *this;
+    }
 
     // 便捷的取Cell方法
     Cell& operator[](const Coord& pos) noexcept {
