@@ -16,8 +16,8 @@ struct Path_find_config {
     // 沙漠格子的相对距离
     double desert_dist;
 
-    // 沼泽格子的相对距离（默认沼泽不通）
-    double swamp_dist;
+    // 是否允许经过沼泽
+    bool can_walk_swamp;
 
     // 是否只搜索将领可通过的路径
     bool general_path;
@@ -25,8 +25,11 @@ struct Path_find_config {
     // 最大搜索距离
     double max_dist;
 
-    Path_find_config(double desert_dist, double swamp_dist = 1e9, bool general_path = true, double max_dist = 1e9) noexcept :
-        desert_dist(desert_dist), swamp_dist(swamp_dist), general_path(general_path), max_dist(max_dist) {}
+    // 自定义的额外距离
+    int (*custom_dist)[Constant::row];
+
+    Path_find_config(double desert_dist, bool can_walk_swamp = false, bool general_path = true, double max_dist = 1e9) noexcept :
+        desert_dist(desert_dist), can_walk_swamp(can_walk_swamp), general_path(general_path), max_dist(max_dist), custom_dist(nullptr) {}
 
 };
 
@@ -237,8 +240,8 @@ class Militia_plan {
 public:
     // 目标
     const Generals* target;
-    // 发起行动的根据地
-    const Militia_area& area;
+    // 发起行动的根据地，如果是从主将上分兵则为nullptr
+    const Militia_area* area;
     // 行动方案，每一个元素均为一个“从A出发，向dir方向移动”的操作
     std::vector<std::pair<Coord, Direction>> plan;
 
@@ -248,7 +251,7 @@ public:
     int gather_steps;
 
     // 构造函数：通过`calc_gather_plan`计算出的`plan`构造
-    Militia_plan(const Generals* target, const Militia_area& area, std::vector<std::pair<Coord, Direction>>&& plan, int army_used) noexcept :
+    Militia_plan(const Generals* target, const Militia_area* area, std::vector<std::pair<Coord, Direction>>&& plan, int army_used) noexcept :
         target(target), area(area), plan(std::move(plan)), army_used(army_used), gather_steps(this->plan.size()) {}
     Militia_plan(const Militia_plan&) noexcept = default;
 
@@ -263,8 +266,11 @@ public:
     // 指定当前状态并进行分析
     Militia_analyzer(const GameState& state) noexcept;
 
-    // 针对一个目标（油井或中立副将）搜索可行的占领方案
-    std::optional<Militia_plan> search_plan(const Generals* target) const noexcept;
+    // 针对一个目标（油井或中立副将）搜索可行的占领方案，其兵力来自民兵
+    std::optional<Militia_plan> search_plan_from_militia(const Generals* target) const noexcept;
+
+    // 针对一个目标（油井或中立副将）搜索可行的占领方案，其兵力从指定`provider`中获取
+    std::optional<Militia_plan> search_plan_from_provider(const Generals* target, const Generals* provider) const noexcept;
 
 private:
     const GameState& state;
@@ -292,7 +298,7 @@ private:
 Dist_map::Dist_map(const GameState& board, const Coord& origin, const Path_find_config& cfg) noexcept : origin(origin), cfg(cfg), board(board) {
     // 初始化
     bool vis[col][row];
-    double cell_dist[static_cast<int>(CellType::Type_count)] = {1.0, cfg.desert_dist, cfg.swamp_dist};
+    double cell_dist[static_cast<int>(CellType::Type_count)] = {1.0, cfg.desert_dist, cfg.can_walk_swamp ? 1.0 : 1e9};
     std::memset(vis, 0, sizeof(vis));
     std::fill_n(reinterpret_cast<double*>(dist), col * row, MAX_DIST + 1);
 
@@ -318,6 +324,7 @@ Dist_map::Dist_map(const GameState& board, const Coord& origin, const Path_find_
             if (!next_pos.in_map() || vis[next_pos.x][next_pos.y]) continue;
 
             double next_dist = node.dist + cell_dist[static_cast<int>(board[next_pos].type)];
+            if (cfg.custom_dist) next_dist += cfg.custom_dist[next_pos.x][next_pos.y];
             if (next_dist < dist[next_pos.x][next_pos.y]) queue.emplace(next_pos, next_dist);
         }
     }
@@ -352,7 +359,7 @@ std::vector<Coord> Dist_map::path_to_origin(const Coord& pos) const noexcept {
         curr_pos += DIRECTION_ARR[dir];
         path.push_back(curr_pos);
 
-        if (path.size() >= Constant::col * Constant::row) {
+        if (path.size() >= 50) {
             logger.log(LOG_LEVEL_ERROR, "path_to_origin: path too long");
             for (const Coord& coord : path) logger.log(LOG_LEVEL_ERROR, "\t%s", coord.str().c_str());
             assert(false);
@@ -387,7 +394,7 @@ std::optional<std::vector<Operation>> Attack_searcher::search() const noexcept {
     assert(enemy_general);
     if (!state.can_soldier_step_on(enemy_general->position, attacker_seat)) return std::nullopt; // 排除敌方主将在沼泽而走不进的情况
 
-    Dist_map enemy_dist(state, enemy_general->position, Path_find_config(1.0, 1e9, false));
+    Dist_map enemy_dist(state, enemy_general->position, Path_find_config(1.0, state.has_swamp_tech(attacker_seat), false));
 
     // 对每个将领
     for (int i = 0, siz = state.generals.size(); i < siz; ++i) {
@@ -549,8 +556,18 @@ Militia_analyzer::Militia_analyzer(const GameState& state) noexcept : state(stat
     }
 }
 
-std::optional<Militia_plan> Militia_analyzer::search_plan(const Generals* target) const noexcept {
-    Dist_map target_dist(state, target->position, Path_find_config(2.0)); // 以沙漠为2格计算余量
+std::optional<Militia_plan> Militia_analyzer::search_plan_from_militia(const Generals* target) const noexcept {
+    assert(target);
+
+    // 将敌军数考虑到距离中
+    static int extra_dist[Constant::col][Constant::row];
+    for (int x = 0; x < Constant::col; ++x)
+        for (int y = 0; y < Constant::row; ++y)
+            extra_dist[x][y] = std::max(0, -state.eff_army(Coord(x, y), my_seat));
+
+    Path_find_config dist_cfg(2.0);
+    dist_cfg.custom_dist = extra_dist;
+    Dist_map target_dist(state, target->position, dist_cfg); // 以沙漠为2格计算余量
 
     // 将根据地从近到远排序
     std::vector<Militia_dist_info> dist_info;
@@ -573,6 +590,8 @@ std::optional<Militia_plan> Militia_analyzer::search_plan(const Generals* target
 
     // 开始寻找方案
     int enemy_army = state[target->position].army;
+    if (target->player != -1) enemy_army += 3; // 额外余量
+
     for (const Militia_dist_info& info : dist_info) {
         const Militia_area& area = *info.area;
         int army_required = enemy_army + info.dist;
@@ -580,7 +599,7 @@ std::optional<Militia_plan> Militia_analyzer::search_plan(const Generals* target
         if (area.max_army < army_required) continue; // 兵力不足
 
         // 计算方案：兵力汇集到最近点处
-        Militia_plan plan(target, *info.area, calc_gather_plan(info, army_required), army_required);
+        Militia_plan plan(target, info.area, calc_gather_plan(info, army_required), army_required);
 
         // 再从集合点处走到目标点
         std::vector<Coord> path = target_dist.path_to_origin(info.clostest_point);
@@ -589,6 +608,36 @@ std::optional<Militia_plan> Militia_analyzer::search_plan(const Generals* target
         return plan;
     }
     return std::nullopt;
+}
+
+std::optional<Militia_plan> Militia_analyzer::search_plan_from_provider(const Generals* target, const Generals* provider) const noexcept {
+    assert(target && provider);
+
+    // 将敌军数考虑到距离中
+    static int extra_dist[Constant::col][Constant::row];
+    for (int x = 0; x < Constant::col; ++x)
+        for (int y = 0; y < Constant::row; ++y)
+            extra_dist[x][y] = std::max(0, -state.eff_army(Coord(x, y), my_seat));
+
+    Path_find_config dist_cfg(2.0, state.has_swamp_tech(provider->player));
+    dist_cfg.custom_dist = extra_dist;
+    Dist_map target_dist(state, target->position, dist_cfg); // 以沙漠为2格计算余量
+
+    // 开始寻找方案，集合点就是`provider`的位置
+    int enemy_army = state[target->position].army;
+    if (target->player != -1) enemy_army += 3; // 额外余量
+
+    int army_required = enemy_army + target_dist[provider->position];
+    if (state[provider->position].army - 1 < army_required) return std::nullopt; // 兵力不足
+
+    // 此时不需要集合
+    Militia_plan plan(target, nullptr, {}, army_required);
+
+    // 从`provider`处走到目标点
+    std::vector<Coord> path = target_dist.path_to_origin(provider->position);
+    for (int i = 1, siz = path.size(); i < siz; ++i) plan.plan.emplace_back(path[i-1], from_coord(path[i-1], path[i]));
+
+    return plan;
 }
 
 void Militia_analyzer::analyzer_dfs(const Coord& coord) noexcept {

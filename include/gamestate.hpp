@@ -489,6 +489,10 @@ public:
                 return 0;
         }
     }
+    // 获取指定玩家是否能免疫沼泽
+    bool has_swamp_tech(int player) const noexcept { return tech_level[player][static_cast<int>(TechType::IMMUNE_SWAMP)] > 0; }
+    // 获取指定玩家是否能免疫流沙
+    bool has_desert_tech(int player) const noexcept { return tech_level[player][static_cast<int>(TechType::IMMUNE_SAND)] > 0; }
     // 计算指定玩家每回合的石油产量
     int calc_oil_production(int player) const noexcept;
 
