@@ -91,6 +91,8 @@ public:
     int oil_after_op;
     int remain_move_count;
 
+    std::optional<Deterrence_analyzer> deterrence_analyzer;
+
     void main_process() {
         // 初始操作
         if (game_state.round == 1) {
@@ -113,14 +115,15 @@ public:
         oil_after_op = game_state.coin[my_seat];
         remain_move_count = game_state.rest_move_step[my_seat];
         int oil_production = game_state.calc_oil_production(my_seat);
+        deterrence_analyzer.emplace(main_general, enemy_general, oil_after_op, game_state);
 
         // 计算油量目标值
         if (game_state.round > 15 || game_state[main_general->position].army < game_state[enemy_general->position].army)
             oil_savings = 35;
         else oil_savings = 20;
         if (game_state.round > 20) {
-            Deterrence_analyzer analyzer(main_general, enemy_general, oil_after_op, game_state);
-            if (oil_after_op + oil_production * 9 >= analyzer.min_oil) oil_savings = std::max(oil_savings, analyzer.min_oil);
+            if (oil_after_op + oil_production * 9 >= deterrence_analyzer->min_oil)
+                oil_savings = std::max(oil_savings, deterrence_analyzer->min_oil);
         }
         logger.log(LOG_LEVEL_INFO, "Oil %d(+%d) vs %d(+%d), savings %d",
                    oil_after_op, oil_production, game_state.coin[1 - my_seat], game_state.calc_oil_production(1 - my_seat), oil_savings);
@@ -365,6 +368,8 @@ private:
                 // 若敌方的到达时间小于等于我方，则转入防御
                 Dist_map oil_dist(game_state, well->position, Path_find_config(1.0));
                 double my_arrival_time = oil_dist[general->position] / general->mobility_level;
+                if (oil_dist[general->position] >= Dist_map::MAX_DIST) continue; // 无法防御走不到的油井
+
                 for (int j = 0; j < siz; ++j) {
                     const Generals* enemy = game_state.generals[j];
                     if (enemy->player != 1 - my_seat || dynamic_cast<const OilWell*>(enemy) != nullptr) continue;
@@ -383,7 +388,7 @@ private:
             if (defence_triggered) continue;
 
             // 占领：3格内油田优先
-            Dist_map dist_map(game_state, general->position, Path_find_config{2.0});
+            Dist_map dist_map(game_state, general->position, Path_find_config{2.0, game_state.has_swamp_tech(my_seat)});
             int best_well = -1;
             for (int j = 0; j < siz; ++j) {
                 const Generals* oil_well = game_state.generals[j];
@@ -427,16 +432,29 @@ private:
 
             if (strategy.type == General_strategy_type::DEFEND || strategy.type == General_strategy_type::OCCUPY) {
                 const Coord& target = strategy.target.coord;
-                Dist_map dist_map(game_state, target, Path_find_config{1.0});
+                Dist_map dist_map(game_state, target, Path_find_config{1.0, game_state.has_swamp_tech(my_seat)});
                 Direction dir = dist_map.direction_to_origin(general->position);
                 Coord next_pos = general->position + DIRECTION_ARR[dir];
 
                 const Cell& next_cell = game_state[next_pos];
                 int next_cell_army = ceil(next_cell.army * game_state.defence_multiplier(next_pos));
 
+                // 不踏入危险区，可能会跟direction_to_origin冲突
                 const Generals* enemy = strategy.target.general;
                 const Critical_tactic& tactic = strategy.target.danger->tactic;
-                if (enemy && Dist_map::effect_dist(next_pos, enemy->position, tactic.can_rush, game_state.get_mobility(1-my_seat)) < 0) { // 不踏入危险区，可能会跟direction_to_origin冲突
+                if (enemy && Dist_map::effect_dist(next_pos, enemy->position, tactic.can_rush, game_state.get_mobility(1-my_seat)) < 0) {
+                    // 如果民兵能占领就找民兵
+                    if (strategy.type == General_strategy_type::OCCUPY && (!militia_plan || militia_plan->target->position != target)) {
+                        Militia_analyzer analyzer(game_state);
+                        auto plan = analyzer.search_plan_from_provider(game_state[target].generals, game_state.generals[my_seat]);
+                        if (plan && plan->army_used <= curr_army - 1 && curr_army - plan->army_used >= deterrence_analyzer->min_army) {
+                            logger.log(LOG_LEVEL_INFO, "\t[Occupy] Calling for militia to occupy %s, plan size %d", target.str().c_str(), plan->plan.size());
+                            militia_plan.emplace(*plan);
+                            next_action_index = 0;
+                            continue;
+                        }
+                    }
+
                     logger.log(LOG_LEVEL_INFO, "\tGeneral %s avoiding danger zone", general->position.str().c_str());
                     continue;
                 }
@@ -449,7 +467,15 @@ private:
                         add_operation(Operation::move_generals(strategy.general_id, next_pos));
                         remain_move_count -= 1;
                     }
-                } else { // OCCUPY
+                }
+                // OCCUPY
+                else {
+                    // 如果民兵正在占，则不再行动
+                    if (militia_plan && militia_plan->target->position == target) {
+                        logger.log(LOG_LEVEL_INFO, "\t[Occupy] Waiting for militia action");
+                        continue;
+                    }
+
                     logger.log(LOG_LEVEL_INFO, "\t[Occupy] General at %s -> %s", general->position.str().c_str(), next_pos.str().c_str());
                     if (next_pos == target) {
                         if (curr_army - 1 > next_cell_army) {
@@ -506,14 +532,13 @@ private:
         }
     }
 
+    int next_action_index = 0;
+    std::optional<Militia_plan> militia_plan;
     void militia_move() {
-        static int next_action_index = 0;
-        static std::optional<Militia_plan> militia_plan;
-
         if (militia_plan && next_action_index >= (int)militia_plan->plan.size()) militia_plan.reset();
 
-        // 10回合分析一次
-        if (game_state.round % 10 == 1 || !militia_plan) {
+        // 10回合分析一次，不允许打断主将分配的任务
+        if ((game_state.round % 10 == 1 || !militia_plan) && (militia_plan ? militia_plan->area != nullptr : true)) {
             Militia_analyzer analyzer(game_state);
 
             // 寻找总时长尽量小的方案，且要求集合用时不超过7步
@@ -522,7 +547,7 @@ private:
                 const OilWell* well = dynamic_cast<const OilWell*>(game_state.generals[i]);
                 if (well == nullptr || well->player == my_seat || !game_state.can_soldier_step_on(well->position, my_seat)) continue;
 
-                std::optional<Militia_plan> plan = analyzer.search_plan(well);
+                std::optional<Militia_plan> plan = analyzer.search_plan_from_militia(well);
                 if (!plan || plan->gather_steps > 7) continue;
 
                 if (!best_plan) {
@@ -546,9 +571,9 @@ private:
             }
         }
 
-        // 执行计划
         if (!remain_move_count) return;
-        if (!militia_plan) { // 无任务
+        // 无任务则随机扩展
+        if (!militia_plan) {
             // 寻找可扩展的格子
             for (int x = 0; x < Constant::col; ++x) for (int y = 0; y < Constant::row; ++y) {
                 Coord pos{x, y};
@@ -574,23 +599,33 @@ private:
                 }
                 if (!remain_move_count) return;
             }
-        } else {
-            while (remain_move_count && next_action_index < (int)militia_plan->plan.size()) {
-                // 一些初步检查
-                const Coord& pos = militia_plan->plan[next_action_index].first;
-                const Cell& cell = game_state[pos];
-                const OilWell* well = dynamic_cast<const OilWell*>(cell.generals);
+        }
+        // 否则执行计划
+        else while (remain_move_count && next_action_index < (int)militia_plan->plan.size()) {
+            // 一些初步检查
+            const Coord& pos = militia_plan->plan[next_action_index].first;
+            const Cell& cell = game_state[pos];
+            const OilWell* well = dynamic_cast<const OilWell*>(cell.generals);
 
-                if (cell.player != my_seat || cell.army <= 1 || (cell.generals && !well)) {
-                    militia_plan.reset();
-                    break;
-                }
+            // 是否是从主将上提取兵力的第一步操作
+            bool take_army_from_general = (cell.generals && cell.generals->id == my_seat && next_action_index == 0);
+            if (take_army_from_general)
+                logger.log(LOG_LEVEL_INFO, "[Militia] Plan step %d, take %d army from general", next_action_index+1, militia_plan->army_used);
 
-                logger.log(LOG_LEVEL_INFO, "[Militia] Executing plan step %d, %s->%s", next_action_index+1, pos.str().c_str(), (pos + DIRECTION_ARR[militia_plan->plan[next_action_index].second]).str().c_str());
-                add_operation(Operation::move_army(pos, militia_plan->plan[next_action_index].second, cell.army - 1));
-                remain_move_count -= 1;
-                next_action_index += 1;
+            if ((cell.player != my_seat || cell.army <= 1 || (cell.generals && !well)) && !take_army_from_general) {
+                militia_plan.reset();
+                break;
             }
+            if (take_army_from_general && cell.army - 1 < militia_plan->army_used) {
+                militia_plan.reset();
+                break;
+            }
+
+            logger.log(LOG_LEVEL_INFO, "[Militia] Executing plan step %d, %s->%s",
+                        next_action_index+1, pos.str().c_str(), (pos + DIRECTION_ARR[militia_plan->plan[next_action_index].second]).str().c_str());
+            add_operation(Operation::move_army(pos, militia_plan->plan[next_action_index].second, take_army_from_general ? militia_plan->army_used : cell.army - 1));
+            remain_move_count -= 1;
+            next_action_index += 1;
         }
     }
 };

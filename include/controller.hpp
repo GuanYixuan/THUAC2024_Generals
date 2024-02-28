@@ -71,7 +71,10 @@ public:
 
         // 立即应用操作
         bool valid = execute_single_command(my_seat, op);
-        if (!valid) throw std::runtime_error("Applied invalid operation: " + op.str());
+        if (!valid) {
+            show_map(game_state, std::cerr);
+            throw std::runtime_error("Applied invalid operation: " + op.str());
+        }
     }
 
     // 我方等待发送的操作列表
