@@ -102,14 +102,17 @@ struct Base_tactic {
         return std::max(std::max(strike_count, std::max(command_count, weaken_count)), 1) - 1;
     }
 };
-// 不考虑rush情形下 耗油量不超过250且召唤副将数不超过2 的固定连招，按`required_oil`排序
+// 不考虑rush情形下 耗油量不超过300 的固定连招，按`required_oil`排序
 constexpr Base_tactic BASE_TACTICS[] = {
     {0, 0, 0}, {1, 0, 0}, {0, 1, 0}, {1, 1, 0}, {0, 1, 1},
     {1, 1, 1}, {2, 0, 0}, {0, 2, 0}, {2, 1, 0}, {1, 2, 0},
     {0, 2, 1}, {2, 2, 0}, {3, 0, 0}, {1, 2, 1}, {0, 2, 2},
     {2, 2, 1}, {3, 1, 0}, {1, 2, 2}, {0, 3, 0}, {2, 2, 2},
-    {1, 3, 0}, {3, 2, 0}, {0, 3, 1}, {2, 3, 0}, {1, 3, 1},
-    {3, 3, 0}, {0, 3, 2}, {2, 3, 1},
+    {1, 3, 0}, {3, 2, 0}, {4, 0, 0}, {0, 3, 1}, {2, 3, 0},
+    {1, 3, 1}, {3, 3, 0}, {4, 1, 0}, {0, 3, 2}, {2, 3, 1},
+    {1, 3, 2}, {3, 3, 1}, {0, 4, 0}, {4, 2, 0}, {5, 0, 0},
+    {0, 3, 3}, {2, 3, 2}, {1, 4, 0}, {1, 3, 3}, {3, 3, 2},
+    {0, 4, 1}, {2, 4, 0}, {4, 3, 0},
 };
 // 单将一步杀的不同类型（rush及其耗油在此体现）
 struct Critical_tactic : public Base_tactic {
@@ -484,7 +487,8 @@ std::optional<std::vector<Operation>> Attack_searcher::search() const noexcept {
                 int spawn_count = tactic.spawn_count();
                 std::vector<Coord> spawn_points;
                 if (spawn_count) {
-                    bool subgeneral_covers_enemy = (spawn_count + 1 == tactic.strike_count) || (spawn_count + 1 == tactic.weaken_count);
+                    bool maingeneral_covers_enemy = landing_point.in_attack_range(enemy_general->position);
+                    bool subgeneral_covers_enemy = (spawn_count == tactic.strike_count - maingeneral_covers_enemy) || (spawn_count == tactic.weaken_count - maingeneral_covers_enemy);
                     Coord search_core = path[path.size() - 2]; // 最后一步的前一个格子（即进攻敌方主将前，我方士兵所在格）
                     for (int x = std::max(search_core.x - Constant::GENERAL_ATTACK_RADIUS, 0); x <= std::min(search_core.x + Constant::GENERAL_ATTACK_RADIUS, Constant::col - 1); ++x) {
                         for (int y = std::max(search_core.y - Constant::GENERAL_ATTACK_RADIUS, 0); y <= std::min(search_core.y + Constant::GENERAL_ATTACK_RADIUS, Constant::row - 1); ++y) {

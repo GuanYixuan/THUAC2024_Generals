@@ -14,7 +14,7 @@ os.chdir(os.path.dirname(__file__))
 
 MAP_SIZE = 15
 
-PLAYER_MOBILITY_LEVEL: Dict[int, int] = {1: 2, 2: 5, 3: 8}
+PLAYER_MOBILITY_LEVEL: Dict[int, int] = {1: 2, 2: 3, 3: 5}
 GENERAL_PRODUCTION_LEVEL: Dict[int, int] = {1: 1, 2: 2, 3: 4, 4: 6}
 GENERAL_DEFENCE_LEVEL: Dict[int, int] = {1: 1, 2: 2, 3: 3}
 GENERAL_MOBILITY_LEVEL: Dict[int, int] = {1: 1, 2: 2, 3: 4}

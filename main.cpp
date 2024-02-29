@@ -93,6 +93,9 @@ public:
 
     std::optional<Deterrence_analyzer> deterrence_analyzer;
 
+    // 站在敌方立场进行路径搜索时的额外开销，体现了我方的威慑范围
+    int enemy_pathfind_cost[Constant::col][Constant::row];
+
     void main_process() {
         // 初始操作
         if (game_state.round == 1) {
@@ -116,6 +119,14 @@ public:
         remain_move_count = game_state.rest_move_step[my_seat];
         int oil_production = game_state.calc_oil_production(my_seat);
         deterrence_analyzer.emplace(main_general, enemy_general, oil_after_op, game_state);
+
+        // 计算我方威慑范围
+        if (deterrence_analyzer->rush_tactic || deterrence_analyzer->non_rush_tactic) { // 有威慑
+            bool has_rush = deterrence_analyzer->rush_tactic.has_value();
+            for (int x = 0; x < Constant::col; ++x)
+                for (int y = 0; y < Constant::row; ++y)
+                    enemy_pathfind_cost[x][y] = Dist_map::effect_dist(Coord{x, y}, main_general->position, has_rush, game_state.get_mobility(my_seat)) < 0 ? 1e6 : 0;
+        } else memset(enemy_pathfind_cost, 0, sizeof(enemy_pathfind_cost)); // 无威慑
 
         // 计算油量目标值
         if (game_state.round > 15 || game_state[main_general->position].army < game_state[enemy_general->position].army)
@@ -248,19 +259,21 @@ private:
         logger.log(LOG_LEVEL_INFO, "[Assess] Approach time: %d, oil on approach: %d", approach_time, oil_on_approach);
 
         // 考虑油井升级
-        bool unlock_upgrade_2 = main_general->produce_level >= Constant::GENERAL_PRODUCTION_VALUES[2];
-        bool unlock_upgrade_3 = unlock_upgrade_2 && main_general->defence_level >= Constant::GENERAL_DEFENCE_VALUES[1];
+        Path_find_config enemy_dist_cfg(1.0, game_state.has_swamp_tech(1-my_seat));
+        enemy_dist_cfg.custom_dist = enemy_pathfind_cost;
+        bool unlock_upgrade_3 = main_general->produce_level >= Constant::GENERAL_PRODUCTION_VALUES[2];
         for (int i = 0, siz = game_state.generals.size(); i < siz; ++i) {
             const OilWell* well = dynamic_cast<const OilWell*>(game_state.generals[i]);
             if (well == nullptr || well->player != my_seat) continue;
 
             int tire = well->production_tire();
             int cost = well->production_upgrade_cost();
-            if ((tire >= 1 && !unlock_upgrade_2) || (tire >= 2 && !unlock_upgrade_3)) continue;
+            if (tire >= 2 && !unlock_upgrade_3) continue;
             if (oil_after_op < oil_savings + cost ||
                 oil_on_approach + (Constant::OILWELL_PRODUCTION_VALUES[tire + 1] - Constant::OILWELL_PRODUCTION_VALUES[tire]) * approach_time < oil_savings + cost) continue;
 
-            Dist_map dist_map(game_state, well->position, {1.0});
+            // 以油井为中心计算到敌方的距离（考虑我方威慑）
+            Dist_map dist_map(game_state, well->position, enemy_dist_cfg);
             double min_dist = std::numeric_limits<double>::max();
             for (int j = 0; j < siz; ++j) {
                 const Generals* enemy = game_state.generals[j];
@@ -268,6 +281,7 @@ private:
                 min_dist = std::min(min_dist, dist_map[enemy->position]);
             }
             if (min_dist >= 6 + 3 * tire) {
+                logger.log(LOG_LEVEL_INFO, "[Upgrade] Well %s upgrade to tire %d (min dist %.1f)", well->position.str().c_str(), tire + 1, min_dist);
                 add_operation(Operation::upgrade_generals(well->id, QualityType::PRODUCTION));
                 oil_after_op -= Constant::OILWELL_PRODUCTION_COST[tire];
                 oil_on_approach -= Constant::OILWELL_PRODUCTION_COST[tire];
@@ -360,8 +374,31 @@ private:
                 continue;
             }
 
+            // 占领：4格内油田考虑使用民兵占领
+            Dist_map near_map(game_state, general->position, Path_find_config{1.0, game_state.has_swamp_tech(my_seat)});
+            int best_well = -1;
+            for (int j = 0; j < siz; ++j) {
+                const Generals* oil_well = game_state.generals[j];
+                if (dynamic_cast<const OilWell*>(oil_well) == nullptr || oil_well->player == my_seat) continue;
+                if (best_well == -1 || near_map[oil_well->position] < near_map[game_state.generals[best_well]->position]) best_well = j;
+            }
+            const OilWell* best_well_obj = best_well >= 0 ? dynamic_cast<const OilWell*>(game_state.generals[best_well]) : nullptr;
+            if (best_well_obj && near_map[best_well_obj->position] <= 4.0 && (!militia_plan || militia_plan->target->position != best_well_obj->position)) {
+                // 如果民兵能占领就找民兵了
+                Militia_analyzer analyzer(game_state);
+                auto plan = analyzer.search_plan_from_provider(best_well_obj, game_state.generals[my_seat]);
+                if (plan && plan->army_used <= curr_army - 1 && (best_well_obj->player == -1 || curr_army - plan->army_used >= deterrence_analyzer->min_army)) {
+                    logger.log(LOG_LEVEL_INFO, "\t[Militia] Directly calling for militia to occupy %s, plan size %d", best_well_obj->position.str().c_str(), plan->plan.size());
+                    militia_plan.emplace(*plan);
+                    next_action_index = 0;
+                    continue; // 将领等待1回合
+                }
+            }
+
             // 防御：优先防御cluster中的油田
             bool defence_triggered = false;
+            Path_find_config enemy_dist_cfg(1.0, game_state.has_swamp_tech(1-my_seat));
+            enemy_dist_cfg.custom_dist = enemy_pathfind_cost;
             if (cluster) for (const OilWell* well : cluster->wells) {
                 if (well->player != my_seat) continue;
 
@@ -370,11 +407,12 @@ private:
                 double my_arrival_time = oil_dist[general->position] / general->mobility_level;
                 if (oil_dist[general->position] >= Dist_map::MAX_DIST) continue; // 无法防御走不到的油井
 
+                Dist_map enemy_dist(game_state, well->position, enemy_dist_cfg);
                 for (int j = 0; j < siz; ++j) {
                     const Generals* enemy = game_state.generals[j];
                     if (enemy->player != 1 - my_seat || dynamic_cast<const OilWell*>(enemy) != nullptr) continue;
 
-                    if (oil_dist[enemy->position] / enemy->mobility_level <= my_arrival_time) {
+                    if (enemy_dist[enemy->position] / enemy->mobility_level <= my_arrival_time) {
                         strategies.emplace_back(General_strategy{i, General_strategy_type::DEFEND, Strategy_target(well->position, most_danger)});
                         logger.log(LOG_LEVEL_INFO, "[Allocate] General %s defend oil well %s under [%s]",
                                    general->position.str().c_str(), well->position.str().c_str(), most_danger.tactic.str().c_str());
@@ -387,21 +425,8 @@ private:
             }
             if (defence_triggered) continue;
 
-            // 占领：3格内油田优先
-            Dist_map dist_map(game_state, general->position, Path_find_config{2.0, game_state.has_swamp_tech(my_seat)});
-            int best_well = -1;
-            for (int j = 0; j < siz; ++j) {
-                const Generals* oil_well = game_state.generals[j];
-                if (dynamic_cast<const OilWell*>(oil_well) == nullptr || oil_well->player == my_seat) continue;
-                if (best_well == -1 || dist_map[oil_well->position] < dist_map[game_state.generals[best_well]->position]) best_well = j;
-            }
-            if (best_well != -1 && dist_map[game_state.generals[best_well]->position] <= 3.0) {
-                strategies.emplace_back(General_strategy{i, General_strategy_type::OCCUPY, Strategy_target{game_state.generals[best_well]->position, most_danger}});
-                logger.log(LOG_LEVEL_INFO, "[Allocate] General %s -> well %s (near)", general->position.str().c_str(), game_state.generals[best_well]->position.str().c_str());
-                continue;
-            }
-
             // 占领：cluster中的油田
+            Dist_map dist_map(game_state, general->position, Path_find_config{curr_army <= 20 ? 3.0 : 2.0, game_state.has_swamp_tech(my_seat)});
             if (cluster) {
                 bool found = false;
                 for (const OilWell* well : cluster->wells) {
@@ -432,7 +457,7 @@ private:
 
             if (strategy.type == General_strategy_type::DEFEND || strategy.type == General_strategy_type::OCCUPY) {
                 const Coord& target = strategy.target.coord;
-                Dist_map dist_map(game_state, target, Path_find_config{1.0, game_state.has_swamp_tech(my_seat)});
+                Dist_map dist_map(game_state, target, Path_find_config{2.0, game_state.has_swamp_tech(my_seat)});
                 Direction dir = dist_map.direction_to_origin(general->position);
                 Coord next_pos = general->position + DIRECTION_ARR[dir];
 
@@ -447,7 +472,7 @@ private:
                     if (strategy.type == General_strategy_type::OCCUPY && (!militia_plan || militia_plan->target->position != target)) {
                         Militia_analyzer analyzer(game_state);
                         auto plan = analyzer.search_plan_from_provider(game_state[target].generals, game_state.generals[my_seat]);
-                        if (plan && plan->army_used <= curr_army - 1 && curr_army - plan->army_used >= deterrence_analyzer->min_army) {
+                        if (plan && plan->army_used <= curr_army - 1 && (curr_army - plan->army_used >= deterrence_analyzer->min_army || plan->plan.size() <= 3)) {
                             logger.log(LOG_LEVEL_INFO, "\t[Occupy] Calling for militia to occupy %s, plan size %d", target.str().c_str(), plan->plan.size());
                             militia_plan.emplace(*plan);
                             next_action_index = 0;
@@ -522,10 +547,15 @@ private:
                     logger.log(LOG_LEVEL_INFO, "[Retreat] General at %s -> %s, dist -> %d", general->position.str().c_str(), best_pos.str().c_str(), max_eff_dist);
                 }
                 // 找不到解，尝试升级防御
-                if (max_eff_dist < 0 && oil_after_op >= general->defence_upgrade_cost()) {
-                    oil_after_op -= general->defence_upgrade_cost();
-                    add_operation(Operation::upgrade_generals(general->id, QualityType::DEFENCE));
-                    logger.log(LOG_LEVEL_INFO, "[Retreat] General at %s upgrade defence due to danger", general->position.str().c_str());
+                if (max_eff_dist < 0) {
+                    Deterrence_analyzer analyzer(enemy, general, game_state.coin[1-my_seat], game_state);
+
+                    // 假如是真的威胁，则升级防御
+                    if (analyzer.rush_tactic && oil_after_op >= general->defence_upgrade_cost()) {
+                        oil_after_op -= general->defence_upgrade_cost();
+                        add_operation(Operation::upgrade_generals(general->id, QualityType::DEFENCE));
+                        logger.log(LOG_LEVEL_INFO, "[Retreat] General at %s upgrade defence due to danger", general->position.str().c_str());
+                    }
                 }
 
             } else assert(!"Invalid strategy type");
@@ -613,10 +643,12 @@ private:
                 logger.log(LOG_LEVEL_INFO, "[Militia] Plan step %d, take %d army from general", next_action_index+1, militia_plan->army_used);
 
             if ((cell.player != my_seat || cell.army <= 1 || (cell.generals && !well)) && !take_army_from_general) {
+                logger.log(LOG_LEVEL_INFO, "[Militia] Plan step %d, invalid position", next_action_index+1);
                 militia_plan.reset();
                 break;
             }
             if (take_army_from_general && cell.army - 1 < militia_plan->army_used) {
+                logger.log(LOG_LEVEL_INFO, "[Militia] Plan step %d, army not enough to take %d from general", next_action_index+1, militia_plan->army_used);
                 militia_plan.reset();
                 break;
             }
