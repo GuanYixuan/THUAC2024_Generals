@@ -156,12 +156,16 @@ public:
     // 当前情况下的最小耗油rush威慑方案，可能不存在
     std::optional<Critical_tactic> rush_tactic;
 
+    // 能对对方建立rush威慑的“对方最大兵力”
+    int target_max_army;
+
     // 构造并进行分析，对`attacker`与`target`同阵营的情况结果可能不正确
     Deterrence_analyzer(const Generals* attacker, const Generals* target, int attacker_oil, const GameState& state) noexcept :
         attacker(attacker), target(target), attacker_oil(attacker_oil) {
 
         min_oil = std::numeric_limits<int>::max();
         min_army = std::numeric_limits<int>::max();
+        target_max_army = 0;
 
         int attacker_army = state[attacker->position].army;
         int target_army = state[target->position].army;
@@ -178,8 +182,10 @@ public:
                 if (!rush_tactic && attacker_oil >= base.required_oil + GENERAL_SKILL_COST[SkillType::RUSH]) rush_tactic.emplace(true, base);
             }
             // 能够负担得起
-            if (attacker_oil >= base.required_oil + GENERAL_SKILL_COST[SkillType::RUSH])
+            if (attacker_oil >= base.required_oil + GENERAL_SKILL_COST[SkillType::RUSH]) {
                 min_army = std::min(min_army, (int)std::ceil(target_army / atk_mult));
+                target_max_army = std::max(target_max_army, (int)(attacker_army * atk_mult));
+            }
         }
     }
 
@@ -488,7 +494,7 @@ std::optional<std::vector<Operation>> Attack_searcher::search() const noexcept {
                 std::vector<Coord> spawn_points;
                 if (spawn_count) {
                     bool maingeneral_covers_enemy = landing_point.in_attack_range(enemy_general->position);
-                    bool subgeneral_covers_enemy = (spawn_count == tactic.strike_count - maingeneral_covers_enemy) || (spawn_count == tactic.weaken_count - maingeneral_covers_enemy);
+                    bool subgeneral_covers_enemy = (spawn_count <= tactic.strike_count - maingeneral_covers_enemy) || (spawn_count <= tactic.weaken_count - maingeneral_covers_enemy);
                     Coord search_core = path[path.size() - 2]; // 最后一步的前一个格子（即进攻敌方主将前，我方士兵所在格）
                     for (int x = std::max(search_core.x - Constant::GENERAL_ATTACK_RADIUS, 0); x <= std::min(search_core.x + Constant::GENERAL_ATTACK_RADIUS, Constant::col - 1); ++x) {
                         for (int y = std::max(search_core.y - Constant::GENERAL_ATTACK_RADIUS, 0); y <= std::min(search_core.y + Constant::GENERAL_ATTACK_RADIUS, Constant::row - 1); ++y) {
