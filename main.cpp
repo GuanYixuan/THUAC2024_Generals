@@ -318,10 +318,6 @@ private:
     void update_strategy() {
         strategies.clear();
 
-        bool cluster_occupied = true;
-        if (cluster) for (const OilWell* well : cluster->wells)
-            if (game_state[well->position].player != my_seat) cluster_occupied = false;
-
         for (int i = 0, siz = game_state.generals.size(); i < siz; ++i) {
             const Generals* general = game_state.generals[i];
             // 暂时只给主将分配策略
@@ -388,13 +384,14 @@ private:
                 Militia_analyzer analyzer(game_state);
                 auto plan = analyzer.search_plan_from_provider(best_well_obj, game_state.generals[my_seat]);
                 // 要么仍然能保持威慑，要么是占领中立油井
-                if (plan && plan->army_used <= curr_army - 1 && (best_well_obj->player == -1 || curr_army - plan->army_used >= deterrence_analyzer->min_army)) {
+                if (plan && plan->army_used <= curr_army - 1 && (best_well_obj->player == -1 || curr_army - plan->army_used >= deterrence_analyzer->min_army * 1.2)) {
                     // 但是不能被别人威胁
                     bool safe = true;
-                    if (most_danger.enemy) {
+                    if (most_danger.enemy) { // most_danger.enemy 这个条件是不太准确的
                         Deterrence_analyzer enemy_deter(most_danger.enemy, general, game_state.coin[1-my_seat], game_state);
-                        if (curr_army - plan->army_used < enemy_deter.target_max_army && Dist_map::effect_dist(general->position, most_danger.enemy->position, true, game_state.get_mobility(1-my_seat)) < 0)
-                            safe = false;
+                        int eff_dist = Dist_map::effect_dist(general->position, most_danger.enemy->position, true, game_state.get_mobility(1-my_seat));
+                        logger.log(LOG_LEVEL_INFO, "\t[Assess] Reserve army %d, eff dist %d", enemy_deter.target_max_army, eff_dist);
+                        if (curr_army - plan->army_used < enemy_deter.target_max_army && eff_dist < 0) safe = false;
                     }
                     if (safe) {
                         logger.log(LOG_LEVEL_INFO, "\t[Militia] Directly calling for militia to occupy %s, plan size %d", best_well_obj->position.str().c_str(), plan->plan.size());
@@ -529,7 +526,9 @@ private:
                     if (strategy.type == General_strategy_type::OCCUPY && (!militia_plan || militia_plan->target->position != target)) {
                         Militia_analyzer analyzer(game_state);
                         auto plan = analyzer.search_plan_from_provider(game_state[target].generals, game_state.generals[my_seat]);
-                        if (plan && plan->army_used <= curr_army - 1 && (curr_army - plan->army_used >= deterrence_analyzer->min_army || plan->plan.size() <= 3)) {
+                        // 首先兵要足够，其次不能太远
+                        if (plan && plan->army_used <= curr_army - 1 && plan->plan.size() <= 8 &&
+                            (curr_army - plan->army_used >= deterrence_analyzer->min_army * 1.2 || plan->plan.size() <= 3)) {
                             logger.log(LOG_LEVEL_INFO, "\t[Occupy] Calling for militia to occupy %s, plan size %d", target.str().c_str(), plan->plan.size());
                             militia_plan.emplace(*plan);
                             next_action_index = 0;
@@ -669,7 +668,6 @@ private:
             // 一些初步检查
             const Coord& pos = militia_plan->plan[next_action_index].first;
             const Cell& cell = game_state[pos];
-            const OilWell* well = dynamic_cast<const OilWell*>(cell.generals);
 
             // 是否是从主将上提取兵力的第一步操作
             bool take_army_from_general = (cell.generals && cell.generals->id == my_seat && next_action_index == 0);
@@ -678,7 +676,7 @@ private:
 
             // 暂时把副将当作工厂
             if ((cell.player != my_seat || cell.army <= 1 || (cell.generals && cell.generals->id == my_seat)) && !take_army_from_general) {
-                logger.log(LOG_LEVEL_INFO, "[Militia] Plan step %d, invalid position", next_action_index+1);
+                logger.log(LOG_LEVEL_INFO, "[Militia] Plan step %d, invalid position (player %d, army %d)", next_action_index+1, cell.player, cell.army);
                 militia_plan.reset();
                 break;
             }
