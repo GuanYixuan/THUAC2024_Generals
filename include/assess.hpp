@@ -254,8 +254,21 @@ private:
     // 技能释放表
     static std::vector<Skill_discharger> skill_table[DIRECTION_COUNT];
 
-    // 分析某格的技能释放情况
-    std::optional<Skill_discharger> analyze_one_cell(const Coord& pos, const Coord& atk_pos, const Coord& enemy_pos) const noexcept;
+    static void pop_discharger_at(std::vector<Skill_discharger>& dischargers, const Coord& pos) noexcept;
+
+    /**
+     * @brief 分析某格的技能释放情况
+     *
+     * @param pos 本格位置
+     * @param atk_pos 倒数第二个位置，用于判定能否进行统率
+     * @param enemy_pos 敌方主将位置，用于判定能否进行空袭和弱化
+     * @param override_general 强制认定`pos`处的将领为`override_general`，用于landing_point的分析，默认为0xFFFFFFFF
+     * @param bypass_team 忽略对`pos`的阵营检查，用于进攻路径上的分析
+     * @return `std::optional<Skill_discharger>`
+     */
+    std::optional<Skill_discharger> analyze_one_cell(const Coord& pos, const Coord& atk_pos, const Coord& enemy_pos,
+                                                     const Generals* override_general = reinterpret_cast<const Generals*>(0xFFFFFFFF),
+                                                     bool bypass_team = false) const noexcept;
 
     // 计算技能释放表
     void compute_skill_table() const noexcept;
@@ -453,12 +466,18 @@ int Dist_map::effect_dist(const Coord& pos, const Coord& general_pos, bool can_r
 int Attack_searcher::max_borrow_count = 0;
 std::vector<Attack_searcher::Skill_discharger> Attack_searcher::skill_table[DIRECTION_COUNT] = {};
 
-std::optional<Attack_searcher::Skill_discharger> Attack_searcher::analyze_one_cell(const Coord& pos, const Coord& atk_pos, const Coord& enemy_pos) const noexcept {
+void Attack_searcher::pop_discharger_at(std::vector<Skill_discharger>& dischargers, const Coord& pos) noexcept {
+    auto it = std::find_if(dischargers.begin(), dischargers.end(), [&pos](const Skill_discharger& discharger) { return discharger.pos == pos; });
+    if (it != dischargers.end()) dischargers.erase(it);
+}
+
+std::optional<Attack_searcher::Skill_discharger> Attack_searcher::analyze_one_cell(const Coord& pos, const Coord& atk_pos, const Coord& enemy_pos,
+                                                                                   const Generals* override_general, bool bypass_team) const noexcept {
     bool can_command = pos.in_attack_range(atk_pos);
     bool can_cover_enemy = pos.in_attack_range(enemy_pos);
     if (!can_command && !can_cover_enemy) return std::nullopt; // 啥都不能干的格子
 
-    const Generals* general = state[pos].generals;
+    const Generals* general = (override_general != reinterpret_cast<const Generals*>(0xFFFFFFFF)) ? override_general : state[pos].generals;
     if (general && dynamic_cast<const OilWell*>(general)) return std::nullopt; // 油井无法利用
     if (general) { // 有将领（主将或副将）
         // 阵营检查
@@ -471,13 +490,13 @@ std::optional<Attack_searcher::Skill_discharger> Attack_searcher::analyze_one_ce
     // 无将领
     else {
         // 阵营检查（隐含了地形）
-        if (state[pos].player != attacker_seat) return std::nullopt;
+        if (state[pos].player != attacker_seat && !bypass_team) return std::nullopt;
         return Skill_discharger(pos, nullptr, can_command, can_cover_enemy);
     }
     return std::nullopt;
 }
+
 void Attack_searcher::compute_skill_table() const noexcept {
-    logger.log(LOG_LEVEL_DEBUG, "Compute_skill_table: attacker_seat = %d", attacker_seat);
     // 初始化技能释放表
     for (int i = 0; i < DIRECTION_COUNT; ++i) skill_table[i].clear();
 
@@ -497,12 +516,7 @@ void Attack_searcher::compute_skill_table() const noexcept {
         }
 
         // 对技能释放表排序
-        logger.log(LOG_LEVEL_DEBUG, "Compute_skill_table: dir = %d, size = %d", dir, skill_table[dir].size());
         std::sort(skill_table[dir].begin(), skill_table[dir].end(), std::greater<Skill_discharger>());
-        for (Skill_discharger& discharger : skill_table[dir]) {
-            logger.log(LOG_LEVEL_DEBUG, "\tDischarger at %s, general_available = %d, can_command = %d, can_cover_enemy = %d",
-                       discharger.pos.str().c_str(), discharger.general_available(), discharger.can_command, discharger.can_cover_enemy);
-        }
     }
 
     // 计算借用数
@@ -552,7 +566,6 @@ std::optional<std::vector<Operation>> Attack_searcher::search() const noexcept {
             // 根据目前的钱数计算最小借用数
             int skill_cost = tactic.skill_cost();
             int min_borrow_count = std::max(0, tactic.general_count() - (oil - skill_cost) / SPAWN_GENERAL_COST);
-            logger.log(LOG_LEVEL_DEBUG, "\t[%s] skill_cost = %d, min_borrow_count = %d", tactic.str().c_str(), skill_cost, min_borrow_count);
             if (min_borrow_count > max_borrow_count) continue;
 
             // 生成落地点（无rush时落地点即我方位置）
@@ -568,6 +581,7 @@ std::optional<std::vector<Operation>> Attack_searcher::search() const noexcept {
             // 对每个落地点计算能否攻下
             for (const Coord& landing_point : landing_points) {
                 std::vector<Coord> path{enemy_dist.path_to_origin(landing_point)};
+                Coord attack_pos = path[path.size() - 2]; // 倒数第二格（统率位置）
                 if (tactic.can_rush) path.insert(path.begin(), general->position);
 
                 army_left.clear();
@@ -610,8 +624,35 @@ std::optional<std::vector<Operation>> Attack_searcher::search() const noexcept {
                 if (!calc_pass) continue;
 
                 // 最后需要确定能够找到用于释放技能的将领，并重新核算费用
-                logger.log(LOG_LEVEL_DEBUG, "\t\tLanding at %s, army_left = %d", landing_point.str().c_str(), army_left.back());
-                std::vector<Skill_discharger> dischargers = skill_table[from_coord(enemy_general->position, path[path.size() - 2])]; // 复制技能释放表
+                int dir = from_coord(enemy_general->position, path[path.size() - 2]);
+                std::vector<Skill_discharger> dischargers = skill_table[dir]; // 复制技能释放表
+                logger.log(LOG_LEVEL_DEBUG, "\t[%s] skill_cost = %d, min_borrow_count = %d", tactic.str().c_str(), skill_cost, min_borrow_count);
+                logger.log(LOG_LEVEL_DEBUG, "\t\tLanding at %s, army_left = %d, dir = %d", landing_point.str().c_str(), army_left.back(), dir);
+
+                // 假如有rush，则路径上第一二格需要重新计算
+                if (tactic.can_rush) {
+                    pop_discharger_at(dischargers, general->position); // 主将原始位置（这里不再有将）
+                    auto dis = analyze_one_cell(general->position, attack_pos, enemy_general->position, nullptr);
+                    if (dis) dischargers.push_back(*dis);
+
+                    pop_discharger_at(dischargers, landing_point); // 落地点（这里出现了主将）
+                    dis = analyze_one_cell(landing_point, attack_pos, enemy_general->position, general, true);
+                    if (dis) dischargers.push_back(*dis);
+                }
+                // 其余路径格也加入释放表
+                // 范围是(landing_point, attack_pos]
+                for (int j = tactic.can_rush ? 2 : 1, sjz = path.size() - 1; j < sjz; ++j) {
+                    pop_discharger_at(dischargers, path[j]);
+                    std::optional<Skill_discharger> dis = analyze_one_cell(path[j], attack_pos, enemy_general->position, reinterpret_cast<const Generals*>(0xFFFFFFFF), true);
+                    if (dis) dischargers.push_back(*dis);
+                }
+                // 排序技能释放表
+                std::sort(dischargers.begin(), dischargers.end(), std::greater<Skill_discharger>());
+                logger.log(LOG_LEVEL_DEBUG, "\t\tDischargers:");
+                for (const Skill_discharger& discharger : dischargers) {
+                    logger.log(LOG_LEVEL_DEBUG, "\t\t\t%s, general_available = %d, can_command = %d, can_cover_enemy = %d",
+                               discharger.pos.str().c_str(), discharger.general_available(), discharger.can_command, discharger.can_cover_enemy);
+                }
 
                 // 暂时先不考虑路径上的格子（以及落点处不能召唤副将）
                 int spawn_count = 0;
