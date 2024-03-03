@@ -3,6 +3,7 @@ os.chdir(os.path.dirname(__file__))
 
 import pycurl
 import base64
+import sqlite3
 import io, json
 import datetime
 
@@ -32,11 +33,12 @@ class Fetcher:
         """初始化下载器
 
         Args:
-            _auth_key (str): 提供给服务器的token, 可以在排行榜处观察发送的http请求的authorization字段而获得
+            _auth_key (str): 提供给服务器的token, 可以在排行榜处观察发送的https请求的authorization字段而获得
         """
         self.auth_key = _auth_key.replace("Bearer ", "")
 
-    def fetch_match(self, player: "str | Tuple[str, str]", max_count: int = 10000,
+    def fetch_match(self, player: "str | Tuple[str, str]", max_count: int = 10000, *,
+                    result: Optional[bool] = None,
                     start_time: Optional[datetime.datetime] = None, end_time: Optional[datetime.datetime] = None) -> None:
 
         """下载一段时间内的与给定玩家相关的对局, 允许利用对局发起时间、最大下载数量等进一步限制范围
@@ -46,10 +48,11 @@ class Fetcher:
         状态不是"评测成功"的对局会被自动跳过
 
         Args:
-            player (str | Tuple[str, str]): 给定的玩家, 传入tuple表示下载这两个玩家间的对局
-            max_count (int, optional): 最大下载的对局数. 默认无限制.
-            start_time (datetime.datetime, optional): 给定的起始时间, 晚于该时间发起的对局才会被下载. 默认无限制.
-            end_time (datetime.datetime, optional): 给定的结束时间, 早于该时间发起的对局才会被下载. 默认无限制.
+            `player` (`str | Tuple[str, str]`): 给定的玩家, 传入tuple表示下载这两个玩家间的对局
+            `max_count` (`int`, optional): 最大下载的对局数. 默认无限制.
+            `result` (`bool`, optional): 给定的对局结果（第一个玩家胜利/失败）, 只有该结果的对局才会被下载. 默认无限制.
+            `start_time` (`datetime.datetime`, optional): 给定的起始时间, 晚于该时间发起的对局才会被下载. 默认无限制.
+            `end_time` (`datetime.datetime`, optional): 给定的结束时间, 早于该时间发起的对局才会被下载. 默认无限制.
         """
         print("Fetching starts at " + str(datetime.datetime.now()))
 
@@ -60,15 +63,20 @@ class Fetcher:
         query_offset: int = 0
         download_count: int = 0
         while True:
-            response = self.__do_query(query_step, query_offset, search_player)
-            results: List[json_t]= response["results"]
+            # 进行一次查询
+            print("Query: [limit: %d, offset: %d, player: %s]" % (query_step, query_offset, search_player))
+            query_url = "https://api.saiblo.net/api/matches/?limit=%d&offset=%d&username=%s" % (query_step, query_offset, search_player)
+            results: List[json_t]= json.loads(self.__call_pycurl(query_url))["results"]
 
             ending: bool = False
             for match in results:
+                # 筛选符合条件的对局
                 match_time = datetime.datetime.strptime(match["create_time"][:-6], '%a, %d %b %Y %H:%M:%S')
                 if (start_time is not None) and match_time < start_time:
                     ending = True
                     break
+                if (result is not None) and (match["info"][0]["rank"] == 1) != result:
+                    continue
                 if (end_time is not None) and match_time > end_time:
                     continue
                 if (None in tuple(map(lambda x: x["code"], match["info"]))) or (match["state"] != "评测成功"):
@@ -80,16 +88,41 @@ class Fetcher:
                 if another_player and not strs_in_strs(another_player, match_players):
                     continue
 
-                if not ("%s.json" % match["id"]) in os.listdir(replay_folder):
-                    self.__download_replay(match["id"], match)
+                # 若不存在此文件夹，则创建并下载replay
+                match_id: str = str(match["id"])
+                if not match_id in os.listdir(replay_folder):
+                    download_dir = os.path.join(replay_folder, match_id)
+                    print("Download: %s to '%s'" % (match_id, download_dir))
+
+                    if not os.path.exists(download_dir): os.makedirs(download_dir)
+
+                    # 对局meta信息
+                    with open(os.path.join(download_dir, "meta.json"), "w") as f:
+                        meta_json = json.loads(self.__call_pycurl("https://api.saiblo.net/api/matches/%s/" % match_id))
+                        # 将message中的独立json内容补充至meta_json中
+                        msg_json: json_t = json.loads(meta_json["message"])
+                        for state in msg_json["states"]:
+                            state["stderr"] = base64.b64decode(state["stderr"]).decode()
+                        msg_json["stdinRecords"] = [base64.b64decode(x).decode() for x in msg_json["stdinRecords"]]
+
+                        del meta_json["message"]
+                        for key, value in msg_json.items():
+                            meta_json[key] = value
+
+                        f.write(json.dumps(meta_json, indent=2, ensure_ascii=False))
+
+                    # replay主体
+                    with open(os.path.join(download_dir, "replay.json"), "w") as f:
+                        f.write(self.__call_pycurl("https://api.saiblo.net/api/matches/%s/download/" % match_id))
+
                 download_count += 1
 
                 if download_count >= max_count:
                     ending = True
                     break
 
-            if ending or len(results) < query_step:
-                break
+            # 时间已经早于end_time或查询结果数量不足query_step（无更多结果）
+            if ending or len(results) < query_step: break
             query_offset += query_step
 
     def __call_pycurl(self, url: str, extra_header: List[str] = []) -> str:
@@ -108,21 +141,6 @@ class Fetcher:
         c.close()
 
         return buffer.getvalue().decode("utf-8")
-
-    def __do_query(self, limit: int, offset: int, username: str) -> json_t:
-        print("Query: [limit: %d, offset: %d, player: %s]" % (limit, offset, username))
-        return json.loads(self.__call_pycurl("https://api.saiblo.net/api/matches/?limit=%d&offset=%d&username=%s" % (limit, offset, username)))
-    def __download_replay(self, match_id: "int | str", upper_level_message: json_t) -> None:
-        if isinstance(match_id, int):
-            match_id = str(match_id)
-        print("Download: %s" % match_id)
-
-        replay_json = {"replay": json.loads(self.__call_pycurl("https://api.saiblo.net/api/matches/%s/download/" % match_id))}
-        for _name in ("id", "create_time", "info", "message"):
-            replay_json[_name] = upper_level_message[_name]
-
-        with open("../downloads/replay/%s.json" % match_id, "w") as f:
-            json.dump(replay_json, f)
 
 class Analyzer:
     """对局分析工具, 目前用于筛选满足指定条件的对局"""
