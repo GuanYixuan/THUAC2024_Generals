@@ -110,6 +110,8 @@ public:
             }
             return;
         }
+        // 继续局面debug
+        if (game_state.round % 10 == 1) show_map(game_state, std::cerr);
 
         const MainGenerals* main_general = dynamic_cast<const MainGenerals*>(game_state.generals[my_seat]);
         const MainGenerals* enemy_general = dynamic_cast<const MainGenerals*>(game_state.generals[1 - my_seat]);
@@ -297,6 +299,7 @@ private:
 
             oil_after_op -= main_general->production_upgrade_cost();
             add_operation(Operation::upgrade_generals(my_seat, QualityType::PRODUCTION));
+            logger.log(LOG_LEVEL_INFO, "[Upgrade] Main general upgrade production to %d", main_general->produce_level);
         }
         // 主将防御升级
         else if (oil_after_op >= main_general->defence_upgrade_cost() &&
@@ -305,13 +308,23 @@ private:
 
             oil_after_op -= main_general->defence_upgrade_cost();
             add_operation(Operation::upgrade_generals(my_seat, QualityType::DEFENCE));
+            logger.log(LOG_LEVEL_INFO, "[Upgrade] Main general upgrade defence to %.0f", main_general->defence_tire());
         }
         // 油足够多，则考虑升级行动力
         else if (oil_after_op >= PLAYER_MOVEMENT_COST[mob_tire] &&
-                 oil_on_approach >= oil_savings + 100 + PLAYER_MOVEMENT_COST[mob_tire]) {
+                 oil_on_approach >= oil_savings + 50 + PLAYER_MOVEMENT_COST[mob_tire]) {
 
             oil_after_op -= PLAYER_MOVEMENT_COST[mob_tire];
             add_operation(Operation::upgrade_tech(TechType::MOBILITY));
+            logger.log(LOG_LEVEL_INFO, "[Upgrade] Upgrade mobility to %d", game_state.get_mobility(my_seat));
+        }
+        // 油更加多，则考虑升级沼泽科技
+        else if (!game_state.has_swamp_tech(my_seat) && oil_after_op >= swamp_immunity &&
+                 oil_on_approach >= oil_savings + 100 + swamp_immunity) {
+
+            oil_after_op -= swamp_immunity;
+            add_operation(Operation::upgrade_tech(TechType::IMMUNE_SWAMP));
+            logger.log(LOG_LEVEL_INFO, "[Upgrade] Upgrade swamp immunity");
         }
     }
 
@@ -528,7 +541,7 @@ private:
                         auto plan = analyzer.search_plan_from_provider(game_state[target].generals, game_state.generals[my_seat]);
                         // 首先兵要足够，其次不能太远
                         if (plan && plan->army_used <= curr_army - 1 && plan->plan.size() <= 8 &&
-                            (curr_army - plan->army_used >= deterrence_analyzer->min_army * 1.2 || plan->plan.size() <= 3)) {
+                            (curr_army - plan->army_used >= deterrence_analyzer->min_army * 1.2 || (plan->plan.size() <= 3 && plan->army_used <= 0.4 * curr_army))) {
                             logger.log(LOG_LEVEL_INFO, "\t[Occupy] Calling for militia to occupy %s, plan size %d", target.str().c_str(), plan->plan.size());
                             militia_plan.emplace(*plan);
                             next_action_index = 0;

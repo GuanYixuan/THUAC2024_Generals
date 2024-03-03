@@ -51,7 +51,7 @@ public:
         logger.log(LOG_LEVEL_INFO, "Applying enemy ops:");
         for (const auto &op : ops) {
             bool valid = execute_single_command(1 - my_seat, op);
-            logger.log(LOG_LEVEL_INFO, "\tOp: %s", op.str().c_str());
+            logger.log(LOG_LEVEL_INFO, "\t%s", op.str().c_str());
 
             if (!valid) {
                 show_map(game_state, std::cerr);
@@ -101,7 +101,7 @@ bool GameController::execute_single_command(int player, const Operation &op)
         // 移动军队
         case OperationType::MOVE_ARMY:
             if (params[3] > game_state[{params[0], params[1]}].army - 1) {
-                logger.log(LOG_LEVEL_ERROR, "Invalid army count for op MOVE_ARMY: %s %d %d, truncated to %d",
+                logger.log(LOG_LEVEL_ERROR, "\t\tInvalid army count for op MOVE_ARMY: %s %d %d, truncated to %d",
                            Coord(params[0], params[1]).str().c_str(), params[2], params[3], game_state[{params[0], params[1]}].army - 1);
                 params[3] = game_state[{params[0], params[1]}].army - 1;
             }
@@ -186,7 +186,7 @@ void GameController::init()
 
 void GameController::send_ops() {
     logger.log(LOG_LEVEL_INFO, "Sending ops:");
-    for (const Operation &op : my_operation_list) logger.log(LOG_LEVEL_INFO, "\tOp: %s", op.str().c_str());
+    for (const Operation &op : my_operation_list) logger.log(LOG_LEVEL_INFO, "\t%s", op.str().c_str());
 
     // 结束我方操作回合，将操作列表打包发送并清空。
     std::string msg = "";
