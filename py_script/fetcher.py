@@ -3,9 +3,12 @@ os.chdir(os.path.dirname(__file__))
 
 import pycurl
 import base64
-import sqlite3
+import pickle
 import io, json
 import datetime
+
+from DB_handler import DB_handler
+from DB_handler import Match, AI
 
 from typing import List, Dict, Tuple, Optional, Any
 from typing import Iterable
@@ -29,17 +32,21 @@ class Fetcher:
     """资源下载器, 用于从saiblo网站上获取信息"""
     auth_key: str
 
-    def __init__(self, _auth_key: str) -> None:
+    db_handler: DB_handler
+
+    def __init__(self, db_path: str, _auth_key: str) -> None:
         """初始化下载器
 
         Args:
             _auth_key (str): 提供给服务器的token, 可以在排行榜处观察发送的https请求的authorization字段而获得
         """
         self.auth_key = _auth_key.replace("Bearer ", "")
+        self.db_handler = DB_handler(db_path)
 
     def fetch_match(self, player: "str | Tuple[str, str]", max_count: int = 10000, *,
                     result: Optional[bool] = None,
-                    start_time: Optional[datetime.datetime] = None, end_time: Optional[datetime.datetime] = None) -> None:
+                    start_time: Optional[datetime.datetime] = None, end_time: Optional[datetime.datetime] = None,
+                    no_download: bool = False) -> None:
 
         """下载一段时间内的与给定玩家相关的对局, 允许利用对局发起时间、最大下载数量等进一步限制范围
 
@@ -53,6 +60,7 @@ class Fetcher:
             `result` (`bool`, optional): 给定的对局结果（第一个玩家胜利/失败）, 只有该结果的对局才会被下载. 默认无限制.
             `start_time` (`datetime.datetime`, optional): 给定的起始时间, 晚于该时间发起的对局才会被下载. 默认无限制.
             `end_time` (`datetime.datetime`, optional): 给定的结束时间, 早于该时间发起的对局才会被下载. 默认无限制.
+            `no_download` (`bool`, optional): 是否不下载对局文件, 只记录对局信息到数据库. 默认下载对局文件.
         """
         print("Fetching starts at " + str(datetime.datetime.now()))
 
@@ -79,25 +87,26 @@ class Fetcher:
                     continue
                 if (end_time is not None) and match_time > end_time:
                     continue
+                # 筛除评测失败/未完成的对局
                 if (None in tuple(map(lambda x: x["code"], match["info"]))) or (match["state"] != "评测成功"):
                     continue
 
-                match_players: Iterable[str] = tuple(map(lambda x: x["user"]["username"], match["info"]))
-                match_ais: Iterable[str] = tuple(map(lambda x: "%s %s" % (x["code"]["entity"], x["code"]["version"]), match["info"]))
+                match_players = tuple(map(lambda x: x["user"]["username"], match["info"]))
+                match_ais = tuple(map(lambda x: AI(x["user"]["username"], x["code"]["entity"], x["code"]["version"], x["code"]["remark"]), match["info"]))
 
                 if another_player and not strs_in_strs(another_player, match_players):
                     continue
 
-                # 若不存在此文件夹，则创建并下载replay
-                match_id: str = str(match["id"])
-                if not match_id in os.listdir(replay_folder):
-                    download_dir = os.path.join(replay_folder, match_id)
-                    print("Download: %s to '%s'" % (match_id, download_dir))
+                # 若不存在此对局，则创建并下载replay
+                match_id: int = match["id"]
+                if not self.db_handler.match_exists(match_id):
+                    # 如果需要下载
+                    if not no_download:
+                        download_dir = os.path.join(replay_folder, str(match_id))
+                        print("Download: %s to '%s'" % (match_id, download_dir))
+                        if not os.path.exists(download_dir): os.makedirs(download_dir)
 
-                    if not os.path.exists(download_dir): os.makedirs(download_dir)
-
-                    # 对局meta信息
-                    with open(os.path.join(download_dir, "meta.json"), "w") as f:
+                        # 对局meta信息
                         meta_json = json.loads(self.__call_pycurl("https://api.saiblo.net/api/matches/%s/" % match_id))
                         # 将message中的独立json内容补充至meta_json中
                         msg_json: json_t = json.loads(meta_json["message"])
@@ -108,12 +117,26 @@ class Fetcher:
                         del meta_json["message"]
                         for key, value in msg_json.items():
                             meta_json[key] = value
+                        pickle.dump(meta_json, open(os.path.join(download_dir, "meta.zip"), "wb"))
 
-                        f.write(json.dumps(meta_json, indent=2, ensure_ascii=False))
+                        # replay主体
+                        with open(os.path.join(download_dir, "replay.json"), "w") as f:
+                            f.write(self.__call_pycurl("https://api.saiblo.net/api/matches/%s/download/" % match_id))
+                    else: print("Fetch: %s" % match_id)
 
-                    # replay主体
-                    with open(os.path.join(download_dir, "replay.json"), "w") as f:
-                        f.write(self.__call_pycurl("https://api.saiblo.net/api/matches/%s/download/" % match_id))
+                    # 判定end_state
+                    end_state: str = match["info"][0]["end_state"]
+                    p1_state: str = match["info"][1]["end_state"]
+                    if end_state == "OK" and p1_state != "OK":
+                        end_state = p1_state
+                    elif end_state != "OK" and p1_state != "OK":
+                        raise ValueError("Invalid end_state: %s, %s" % (end_state, p1_state))
+
+                    # 导入数据库
+                    match_obj = Match(match_id, match_time,
+                                      self.db_handler.get_AI_id(match_ais[0], True), self.db_handler.get_AI_id(match_ais[1], True),
+                                      0 if match["info"][0]["rank"] == 1 else 1, end_state)
+                    self.db_handler.add_match(match_obj)
 
                 download_count += 1
 
