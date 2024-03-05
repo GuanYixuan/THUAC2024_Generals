@@ -135,8 +135,9 @@ public:
             oil_savings = 35;
         else oil_savings = 20;
         if (game_state.round > 20) {
-            if (oil_after_op + oil_production * 9 >= deterrence_analyzer->min_oil)
+            if (oil_after_op + oil_production * 12 >= deterrence_analyzer->min_oil)
                 oil_savings = std::max(oil_savings, deterrence_analyzer->min_oil);
+            else oil_savings = 150;
         }
         logger.log(LOG_LEVEL_INFO, "Oil %d(+%d) vs %d(+%d), savings %d",
                    oil_after_op, oil_production, game_state.coin[1 - my_seat], game_state.calc_oil_production(1 - my_seat), oil_savings);
@@ -255,9 +256,11 @@ private:
         // 计算“相遇时间”（仅考虑主将）
         const MainGenerals* main_general = dynamic_cast<const MainGenerals*>(game_state.generals[my_seat]);
         const MainGenerals* enemy_general = dynamic_cast<const MainGenerals*>(game_state.generals[1 - my_seat]);
-        Dist_map my_dist(game_state, main_general->position, Path_find_config{1.0});
-        int approach_time = (my_dist[enemy_general->position] - 5 - enemy_general->mobility_level) / (main_general->mobility_level + enemy_general->mobility_level);
+        Dist_map my_dist(game_state, main_general->position, Path_find_config{1.0, game_state.has_swamp_tech(my_seat)});
+        Dist_map enemy_dist(game_state, enemy_general->position, Path_find_config{1.0, game_state.has_swamp_tech(1-my_seat)});
+        int approach_time = (std::min(my_dist[enemy_general->position], enemy_dist[main_general->position]) - 5 - enemy_general->mobility_level) / (main_general->mobility_level + enemy_general->mobility_level);
         int oil_on_approach = oil_after_op + game_state.calc_oil_production(my_seat) * std::max(0, approach_time);
+        if (approach_time > 100) oil_on_approach = oil_after_op; // 假如无法碰在一起，认为储油量就是当前量
         logger.log(LOG_LEVEL_INFO, "[Assess] Approach time: %d, oil on approach: %d", approach_time, oil_on_approach);
 
         // 考虑油井升级
@@ -311,16 +314,18 @@ private:
             logger.log(LOG_LEVEL_INFO, "[Upgrade] Main general upgrade defence to %.0f", main_general->defence_tire());
         }
         // 油足够多，则考虑升级行动力
+        // 若敌方已升级此科技，则将延迟量50取消
         else if (oil_after_op >= PLAYER_MOVEMENT_COST[mob_tire] &&
-                 oil_on_approach >= oil_savings + 50 + PLAYER_MOVEMENT_COST[mob_tire]) {
+                 oil_on_approach >= oil_savings + PLAYER_MOVEMENT_COST[mob_tire] + (game_state.get_mobility(1 - my_seat) > game_state.get_mobility(my_seat) ? 0 : 50)) {
 
             oil_after_op -= PLAYER_MOVEMENT_COST[mob_tire];
             add_operation(Operation::upgrade_tech(TechType::MOBILITY));
             logger.log(LOG_LEVEL_INFO, "[Upgrade] Upgrade mobility to %d", game_state.get_mobility(my_seat));
         }
         // 油更加多，则考虑升级沼泽科技
+        // 若敌方已升级此科技，则将延迟量100取消
         else if (!game_state.has_swamp_tech(my_seat) && oil_after_op >= swamp_immunity &&
-                 oil_on_approach >= oil_savings + 100 + swamp_immunity) {
+                 oil_on_approach >= oil_savings + swamp_immunity + (game_state.has_swamp_tech(1-my_seat) ? 0 : 100)) {
 
             oil_after_op -= swamp_immunity;
             add_operation(Operation::upgrade_tech(TechType::IMMUNE_SWAMP));
@@ -648,8 +653,13 @@ private:
         }
 
         if (!remain_move_count) return;
-        // 无任务则随机扩展
+        // 无任务则扩展
         if (!militia_plan) {
+            // 按照到敌方的距离升序
+            Dist_map enemy_dist(game_state, game_state.generals[1-my_seat]->position, Path_find_config{1.0, game_state.has_swamp_tech(my_seat)});
+            static std::vector<std::pair<int, Operation>> potential_ops;
+            potential_ops.clear();
+
             // 寻找可扩展的格子
             for (int x = 0; x < Constant::col; ++x) for (int y = 0; y < Constant::row; ++y) {
                 Coord pos{x, y};
@@ -667,12 +677,19 @@ private:
                     if (next_cell.player == 1-my_seat && next_cell.army > cell.army - 1) continue; // 排除攻不下（无法中立化）的对方格
                     if (next_cell.player == -1 && next_cell.army >= cell.army - 1) continue; // 中立格弄成中立也没用
 
-                    // 进行移动
-                    logger.log(LOG_LEVEL_INFO, "[Militia] Expanding to %s", next_pos.str().c_str());
-                    add_operation(Operation::move_army(pos, static_cast<Direction>(dir), cell.army - 1));
-                    remain_move_count -= 1;
+                    // 创建移动操作
+                    potential_ops.emplace_back(enemy_dist[next_pos], Operation::move_army(pos, static_cast<Direction>(dir), cell.army - 1));
                     break;
                 }
+            }
+
+            // 将候选动作排序并执行
+            std::sort(potential_ops.begin(), potential_ops.end(),
+                      [](const std::pair<int, Operation>& a, const std::pair<int, Operation>& b) { return a.first < b.first; });
+            for (const auto& op : potential_ops) {
+                logger.log(LOG_LEVEL_INFO, "[Militia] Expanding (dist %d): %s", op.first, op.second.str().c_str());
+                add_operation(op.second);
+                remain_move_count -= 1;
                 if (!remain_move_count) return;
             }
         }
