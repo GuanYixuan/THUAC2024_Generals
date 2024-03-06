@@ -135,7 +135,7 @@ public:
             oil_savings = 35;
         else oil_savings = 20;
         if (game_state.round > 20) {
-            if (oil_after_op + oil_production * 12 >= deterrence_analyzer->min_oil)
+            if (oil_after_op + oil_production * 10 >= deterrence_analyzer->min_oil)
                 oil_savings = std::max(oil_savings, deterrence_analyzer->min_oil);
             else oil_savings = 150;
         }
@@ -336,6 +336,17 @@ private:
     void update_strategy() {
         strategies.clear();
 
+        // 判断是否油很有优势
+        int my_prod = game_state.calc_oil_production(my_seat);
+        int enemy_prod = game_state.calc_oil_production(1-my_seat);
+        bool oil_advantage = (game_state.coin[my_seat] >= 100) && (game_state.coin[my_seat] >= game_state.coin[1-my_seat] * 2) &&
+                                (my_prod >= enemy_prod * 2 || my_prod >= enemy_prod + 4);
+        if (oil_advantage) logger.log(LOG_LEVEL_INFO, "[Assess] Oil advantage!");
+
+        // 判断主将的兵是否处于劣势
+        bool army_disadvantage = game_state[game_state.generals[my_seat]->position].army * 1.5 < game_state[game_state.generals[1-my_seat]->position].army;
+        logger.log(LOG_LEVEL_INFO, "[Assess] Army disadvantage");
+
         for (int i = 0, siz = game_state.generals.size(); i < siz; ++i) {
             const Generals* general = game_state.generals[i];
             // 暂时只给主将分配策略
@@ -466,12 +477,12 @@ private:
             }
 
             // 否则取最近油田
-            if (best_well == -1 || dist_map[game_state.generals[best_well]->position] > Dist_map::MAX_DIST)
-                logger.log(LOG_LEVEL_WARN, "[Allocate] No oil well found for general at %s", general->position.str().c_str());
-            else {
+            if (best_well >= 0 && dist_map[game_state.generals[best_well]->position] < Dist_map::MAX_DIST && (!army_disadvantage || game_state.round < 25)) {
                 strategies.emplace_back(General_strategy{i, General_strategy_type::OCCUPY, Strategy_target{game_state.generals[best_well]->position, most_danger}});
                 logger.log(LOG_LEVEL_INFO, "[Allocate] General %s -> well %s", general->position.str().c_str(), game_state.generals[best_well]->position.str().c_str());
+                continue;
             }
+            logger.log(LOG_LEVEL_WARN, "[Allocate] No oil well found for general at %s", general->position.str().c_str());
         }
     }
 
@@ -538,6 +549,18 @@ private:
                     continue;
                 }
 
+                // 测试What if
+                GameState new_state;
+                new_state.copy_as(game_state);
+                execute_operation(new_state, my_seat, Operation::move_army(general->position, dir, curr_army - 1));
+                execute_operation(new_state, my_seat, Operation::move_generals(strategy.general_id, next_pos));
+                Attack_searcher searcher(1-my_seat, new_state);
+                auto plan = searcher.search();
+                if (plan) {
+                    logger.log(LOG_LEVEL_INFO, "\t[Occupy] If general move to %s:", next_pos.str().c_str());
+                    for (const auto& step : *plan) logger.log(LOG_LEVEL_INFO, "\t\t%s", step.str().c_str());
+                }
+
                 // 不踏入危险区，可能会跟direction_to_origin冲突
                 if (enemy && Dist_map::effect_dist(next_pos, enemy->position, tactic.can_rush, game_state.get_mobility(1-my_seat)) < 0) {
                     // 如果民兵能占领就找民兵
@@ -554,7 +577,7 @@ private:
                         }
                     }
 
-                    logger.log(LOG_LEVEL_INFO, "\tGeneral %s avoiding danger zone", general->position.str().c_str());
+                    logger.log(LOG_LEVEL_INFO, "\tGeneral %s avoiding danger zone %s", general->position.str().c_str(), next_pos.str().c_str());
                     continue;
                 }
 
@@ -666,6 +689,21 @@ private:
                 const Cell& cell = game_state[pos];
                 if (cell.player != my_seat || cell.army <= 1) continue;
                 if (cell.generals && dynamic_cast<const OilWell*>(cell.generals) == nullptr) continue; // 排除主副将格
+
+                // 油田仅在周围无敌军时允许扩展
+                if (cell.generals && dynamic_cast<const OilWell*>(cell.generals)) {
+                    bool has_enemy = false;
+                    for (int dir = 0; dir < DIRECTION_COUNT; ++dir) {
+                        Coord next_pos = pos + DIRECTION_ARR[dir];
+                        if (!next_pos.in_map()) continue;
+                        const Cell& next_cell = game_state[next_pos];
+                        if (next_cell.player == 1-my_seat && next_cell.army > 0) {
+                            has_enemy = true;
+                            break;
+                        }
+                    }
+                    if (has_enemy) continue;
+                }
 
                 // 尝试扩展
                 for (int dir = 0; dir < DIRECTION_COUNT; ++dir) {
