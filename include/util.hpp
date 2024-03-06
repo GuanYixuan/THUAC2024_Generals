@@ -2,6 +2,8 @@
 #include <vector>
 #include <cassert>
 #include <cmath>
+
+#include "logger.hpp"
 #include "gamestate.hpp"
 
 
@@ -586,5 +588,88 @@ bool tech_update(TechType tech_type, GameState &gamestate, int player) {
         default:
             assert(false);
     }
+    return false;
+}
+
+// 执行单个操作，返回是否成功
+bool execute_operation(GameState &game_state, int player, const Operation &op) {
+    // 获取操作码和操作数
+    OperationType command = op.opcode;
+    std::vector<int> params = op.operand;
+
+    // 根据操作码执行相应的操作
+    switch (command) {
+        // 移动军队
+        case OperationType::MOVE_ARMY:
+            if (params[3] > game_state[{params[0], params[1]}].army - 1) {
+                logger.log(LOG_LEVEL_ERROR, "\t\tInvalid army count for op MOVE_ARMY: %s %d %d, truncated to %d",
+                           Coord(params[0], params[1]).str().c_str(), params[2], params[3], game_state[{params[0], params[1]}].army - 1);
+                params[3] = game_state[{params[0], params[1]}].army - 1;
+            }
+            return army_move({params[0], params[1]}, game_state, player, static_cast<Direction>(params[2] - 1), params[3]);
+        // 移动将军
+        case OperationType::MOVE_GENERALS: {
+            int id = params[0];
+            auto pos = game_state.find_general_position_by_id(id);
+            if (pos.x == -1) return false;
+            return general_move(pos, game_state, player, {params[1], params[2]});
+        }
+        // 更新将军
+        case OperationType::UPDATE_GENERALS: {
+            int id = params[0];
+            auto pos = game_state.find_general_position_by_id(id);
+            if (pos.x == -1) return false;
+
+            switch (params[1]) {
+                case 1:
+                    // 提升生产力
+                    return production_up(pos, game_state, player);
+                case 2:
+                    // 提升防御力
+                    return defence_up(pos, game_state, player);
+                case 3:
+                    // 提升移动力
+                    return movement_up(pos, game_state, player);
+                default:
+                    assert(false);
+            }
+        }
+        // 使用将军技能
+        case OperationType::USE_GENERAL_SKILLS: {
+            int id = params[0];
+            auto pos = game_state.find_general_position_by_id(id);
+            if (pos.x == -1) return false;
+            if (params[1] == 1 || params[1] == 2)
+                return skill_activate(player, pos, {params[2], params[3]}, game_state, static_cast<SkillType>(params[1] - 1));
+            else return skill_activate(player, pos, {-1, -1}, game_state, static_cast<SkillType>(params[1] - 1));
+        }
+        // 更新科技
+        case OperationType::UPDATE_TECH:
+            return tech_update(static_cast<TechType>(params[0] - 1), game_state, player);
+        // 使用超级武器
+        case OperationType::USE_SUPERWEAPON:
+            switch (params[0]) {
+                case 1:
+                    // 炸弹
+                    return bomb(game_state, {params[1], params[2]}, player);
+                case 2:
+                    // 强化
+                    return strengthen(game_state, {params[1], params[2]}, player);
+                case 3:
+                    // 传送
+                    return tp(game_state, {params[3], params[4]}, {params[1], params[2]}, player);
+                case 4:
+                    // 停止时间
+                    return timestop(game_state, {params[1], params[2]}, player);
+                default:
+                    assert(false);
+            }
+        // 召唤将军
+        case OperationType::CALL_GENERAL:
+            return call_generals(game_state, player, {params[0], params[1]});
+        default:
+            assert(false);
+    }
+    assert(!"Should not reach here");
     return false;
 }

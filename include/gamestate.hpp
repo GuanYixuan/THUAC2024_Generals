@@ -412,34 +412,11 @@ public:
         super_weapon_unlocked{false, false}, super_weapon_cd{-1, -1},
         tech_level{{2, 0, 0, 0}, {2, 0, 0, 0}}, rest_move_step{2, 2},
         next_generals_id(0), board{} {}
-    // ~GameState() { // 有问题，被controller.hpp:181调用时崩溃
-    //     for (Generals* gen : generals) delete gen;
-    // }
-    // 复制函数，注意复制将会重新生成将领对象以断开拷贝前后对象间的联系
-    GameState& copy_as(const GameState& other) noexcept {
-        if (this == &other) return *this;
-
-        // 复制一份新的将领列表
-        generals.clear();
-        for (const Generals* gen : other.generals) {
-            if (dynamic_cast<const MainGenerals*>(gen)) generals.push_back(new MainGenerals(*static_cast<const MainGenerals*>(gen)));
-            else if (dynamic_cast<const SubGenerals*>(gen)) generals.push_back(new SubGenerals(*static_cast<const SubGenerals*>(gen)));
-            else if (dynamic_cast<const OilWell*>(gen)) generals.push_back(new OilWell(*static_cast<const OilWell*>(gen)));
-            else assert(!"Invalid generals type");
-        }
-
-        // 其余部分直接赋值
-        round = other.round;
-        std::copy(other.coin, other.coin + PLAYER_COUNT, coin);
-        active_super_weapon = other.active_super_weapon;
-        std::copy(other.super_weapon_unlocked, other.super_weapon_unlocked + PLAYER_COUNT, super_weapon_unlocked);
-        std::copy(other.super_weapon_cd, other.super_weapon_cd + PLAYER_COUNT, super_weapon_cd);
-        memcpy(tech_level, other.tech_level, sizeof(tech_level));
-        std::copy(other.rest_move_step, other.rest_move_step + PLAYER_COUNT, rest_move_step);
-        next_generals_id = other.next_generals_id;
-        memcpy(board, other.board, sizeof(board));
-        return *this;
+    ~GameState() {
+        for (Generals* gen : generals) delete gen;
     }
+    // 复制函数，注意复制将会重新生成将领对象以断开拷贝前后对象间的联系
+    GameState& copy_as(const GameState& other) noexcept;
 
     // 便捷的取Cell方法
     Cell& operator[](const Coord& pos) noexcept {
@@ -501,6 +478,11 @@ public:
         for (const Generals* gen : generals) if (gen->id == general_id) return gen->position;
         return Coord(-1, -1);
     }
+    Generals* find_general_by_id(int general_id) const noexcept {
+        for (Generals* gen : generals) if (gen->id == general_id) return gen;
+        assert(!"General not found");
+        return nullptr;
+    }
     // 考虑沼泽科技，指定玩家的【军队】是否可以移动到指定位置
     bool can_soldier_step_on(const Coord& pos, int player) const noexcept {
         assert(pos.in_map());
@@ -520,6 +502,42 @@ public:
 };
 
 // ******************** GameState ********************
+
+GameState& GameState::copy_as(const GameState& other) noexcept {
+    if (this == &other) return *this;
+
+    // 复制一份新的将领列表
+    generals.clear();
+    for (const Generals* gen : other.generals) {
+        if (dynamic_cast<const MainGenerals*>(gen)) generals.push_back(new MainGenerals(*static_cast<const MainGenerals*>(gen)));
+        else if (dynamic_cast<const SubGenerals*>(gen)) generals.push_back(new SubGenerals(*static_cast<const SubGenerals*>(gen)));
+        else if (dynamic_cast<const OilWell*>(gen)) generals.push_back(new OilWell(*static_cast<const OilWell*>(gen)));
+        else assert(!"Invalid generals type");
+    }
+
+    // 其余部分直接赋值
+    round = other.round;
+    std::copy(other.coin, other.coin + PLAYER_COUNT, coin);
+    active_super_weapon = other.active_super_weapon;
+    std::copy(other.super_weapon_unlocked, other.super_weapon_unlocked + PLAYER_COUNT, super_weapon_unlocked);
+    std::copy(other.super_weapon_cd, other.super_weapon_cd + PLAYER_COUNT, super_weapon_cd);
+    memcpy(tech_level, other.tech_level, sizeof(tech_level));
+    std::copy(other.rest_move_step, other.rest_move_step + PLAYER_COUNT, rest_move_step);
+    next_generals_id = other.next_generals_id;
+    memcpy(board, other.board, sizeof(board));
+
+    // 把Cell上的将领替换一遍
+    for (int x = 0; x < Constant::col; ++x)
+        for (int y = 0; y < Constant::row; ++y) {
+            Cell& cell = this->board[x][y];
+            if (cell.generals != nullptr) {
+                cell.generals = find_general_by_id(cell.generals->id);
+                assert(cell.generals != nullptr);
+            }
+        }
+
+    return *this;
+}
 
 double GameState::attack_multiplier(const Coord& pos, int player) const noexcept {
     assert(pos.in_map());

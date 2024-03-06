@@ -10,10 +10,9 @@
 
 /**
  * @brief 读取初始地图及先后手信息
- * @return std::tuple<int, Gamestate> - 即先后手编号和游戏状态
+ * @return int 先后手编号
  */
-std::tuple<int, GameState> read_init_map() {
-    GameState gamestate;
+int read_init_map(GameState& gamestate) {
     std::string s;
     getline(std::cin, s);
 
@@ -55,7 +54,7 @@ std::tuple<int, GameState> read_init_map() {
         }
         gamestate.generals.push_back(cell.generals);
     }
-    return std::tuple<int, GameState>(my_seat, gamestate);
+    return my_seat;
 }
 /**
  * @brief 读取敌方操作列表
