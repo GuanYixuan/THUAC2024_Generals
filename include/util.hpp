@@ -211,7 +211,12 @@ bool army_rush(const Coord& location, GameState &gamestate, int player, const Co
     else if (new_cell.player == 1 - player) {
         float attack = gamestate.attack_multiplier(location);
         float vs = num * attack - new_cell.army * gamestate.defence_multiplier(destination); // 计算战斗结果
-        assert(vs > 0); // 确保战斗结果为正
+        // 确保战斗结果为正
+        if (vs <= 0) {
+            logger.log(LOG_LEVEL_ERROR, "vs = %d * %f - %d * %f = %f < 0",
+                       num, attack, new_cell.army, gamestate.defence_multiplier(destination), vs);
+            assert(!"army_rush error: vs < 0");
+        }
 
         new_cell.player = player;
         new_cell.army = (int)(std::ceil(vs / attack));

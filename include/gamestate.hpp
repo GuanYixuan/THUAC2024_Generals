@@ -646,10 +646,11 @@ void GameState::update_round() noexcept {
     }
 
     // 超级武器判定
+    // 【原先的错误：_i和_j的上界是开的】
     for (auto &weapon : this->active_super_weapon) {
         if (weapon.type == WeaponType::NUCLEAR_BOOM) {
-            for (int _i = std::max(0, weapon.position.x - SUPER_WEAPON_RADIUS); _i < std::min(Constant::row, weapon.position.x + SUPER_WEAPON_RADIUS); ++_i) {
-                for (int _j = std::max(0, weapon.position.y - SUPER_WEAPON_RADIUS); _j < std::min(Constant::col, weapon.position.y + SUPER_WEAPON_RADIUS); ++_j) {
+            for (int _i = std::max(0, weapon.position.x - SUPER_WEAPON_RADIUS); _i <= std::min(Constant::col - 1, weapon.position.x + SUPER_WEAPON_RADIUS); ++_i) {
+                for (int _j = std::max(0, weapon.position.y - SUPER_WEAPON_RADIUS); _j <= std::min(Constant::row - 1, weapon.position.y + SUPER_WEAPON_RADIUS); ++_j) {
                     Cell& cell = board[_i][_j];
                     if (cell.army > 0) {
                         cell.army = std::max(0, cell.army - NUCLEAR_BOMB_DAMAGE);
