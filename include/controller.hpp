@@ -76,6 +76,12 @@ public:
             throw std::runtime_error("Applied invalid operation: " + op.str());
         }
     }
+    // 向动作列表中添加并立即执行一组操作
+    void add_operations(const Operation_list &ops) {
+        assert(ops.player == my_seat);
+        for (const auto &op : ops) add_operation(op);
+    }
+
 
     // 我方等待发送的操作列表
     std::vector<Operation> my_operation_list;

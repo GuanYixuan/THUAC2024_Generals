@@ -121,8 +121,13 @@ public:
     Operation_list(int player, const std::vector<Operation>& ops) noexcept : player(player), ops(ops) {}
     Operation_list(int player, std::vector<Operation>&& ops) noexcept : player(player), ops(std::move(ops)) {}
 
+    // 取值函数与迭代函数
     Operation& operator[](int index) noexcept { return ops[index]; }
     const Operation& operator[](int index) const noexcept { return ops[index]; }
+    std::vector<Operation>::iterator begin() noexcept { return ops.begin(); }
+    std::vector<Operation>::iterator end() noexcept { return ops.end(); }
+    std::vector<Operation>::const_iterator begin() const noexcept { return ops.begin(); }
+    std::vector<Operation>::const_iterator end() const noexcept { return ops.end(); }
 
     bool operator> (const Operation_list& other) const noexcept { return score > other.score; }
 

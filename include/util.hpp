@@ -680,3 +680,11 @@ bool execute_operation(GameState &game_state, int player, const Operation &op) {
     assert(!"Should not reach here");
     return false;
 }
+
+// 执行一系列操作，返回是否成功
+bool execute_operations(GameState &game_state, const Operation_list& operations) {
+    for (const Operation& op : operations)
+        if (!execute_operation(game_state, operations.player, op))
+            return false;
+    return true;
+}

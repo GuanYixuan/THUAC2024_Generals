@@ -142,7 +142,7 @@ class Fetcher:
                     p1_state: str = match["info"][1]["end_state"]
                     if end_state == "OK" and p1_state != "OK":
                         end_state = p1_state
-                    elif end_state != "OK" and p1_state != "OK":
+                    elif end_state != "OK" and p1_state != "OK" and end_state != p1_state:
                         raise ValueError("Invalid end_state: %s, %s" % (end_state, p1_state))
 
                     # 导入数据库
