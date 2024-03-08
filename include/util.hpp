@@ -600,18 +600,20 @@ bool tech_update(TechType tech_type, GameState &gamestate, int player) {
 bool execute_operation(GameState &game_state, int player, const Operation &op) {
     // 获取操作码和操作数
     OperationType command = op.opcode;
-    std::vector<int> params = op.operand;
+    const int* params = op.operand;
 
     // 根据操作码执行相应的操作
     switch (command) {
         // 移动军队
-        case OperationType::MOVE_ARMY:
-            if (params[3] > game_state[{params[0], params[1]}].army - 1) {
+        case OperationType::MOVE_ARMY: {
+            int real_army = params[3];
+            if (real_army > game_state[{params[0], params[1]}].army - 1) {
                 logger.log(LOG_LEVEL_ERROR, "\t\tInvalid army count for op MOVE_ARMY: %s %d %d, truncated to %d",
-                           Coord(params[0], params[1]).str().c_str(), params[2], params[3], game_state[{params[0], params[1]}].army - 1);
-                params[3] = game_state[{params[0], params[1]}].army - 1;
+                           Coord(params[0], params[1]).str().c_str(), params[2], real_army, game_state[{params[0], params[1]}].army - 1);
+                real_army = game_state[{params[0], params[1]}].army - 1;
             }
-            return army_move({params[0], params[1]}, game_state, player, static_cast<Direction>(params[2] - 1), params[3]);
+            return army_move({params[0], params[1]}, game_state, player, static_cast<Direction>(params[2] - 1), real_army);
+        }
         // 移动将军
         case OperationType::MOVE_GENERALS: {
             int id = params[0];
