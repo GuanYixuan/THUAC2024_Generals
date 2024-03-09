@@ -36,10 +36,10 @@ public:
 };
 
 enum class General_strategy_type {
+    OCCUPY,
+    RETREAT,
     DEFEND,
     ATTACK,
-    RETREAT,
-    OCCUPY
 };
 
 struct Danger {
@@ -422,23 +422,22 @@ private:
             if (best_well_obj && near_map[best_well_obj->position] <= 4.0 && (!militia_plan || militia_plan->target->position != best_well_obj->position)) {
                 // 如果民兵能占领就找民兵了
                 Militia_analyzer analyzer(game_state);
-                auto plan = analyzer.search_plan_from_provider(best_well_obj, game_state.generals[my_seat]);
+                std::optional<Militia_plan> plan = analyzer.search_plan_from_provider(best_well_obj, general);
                 // 要么仍然能保持威慑，要么是占领中立油井
-                if (plan && plan->army_used <= curr_army - 1 && (best_well_obj->player == -1 || curr_army - plan->army_used >= deterrence_analyzer->min_army * 1.2)) {
+                if (plan && plan->army_used <= curr_army - 1 &&
+                    ((best_well_obj->player == -1 && !army_disadvantage) || curr_army - plan->army_used >= deterrence_analyzer->min_army * 1.2)) {
                     // 但是不能被别人威胁
-                    bool safe = true;
-                    if (most_danger.enemy) { // most_danger.enemy 这个条件是不太准确的
-                        Deterrence_analyzer enemy_deter(most_danger.enemy, general, game_state.coin[1-my_seat], game_state);
-                        int eff_dist = Dist_map::effect_dist(general->position, most_danger.enemy->position, true, game_state.get_mobility(1-my_seat));
-                        logger.log(LOG_LEVEL_INFO, "\t[Assess] Reserve army %d, eff dist %d", enemy_deter.target_max_army, eff_dist);
-                        if (curr_army - plan->army_used < enemy_deter.target_max_army && eff_dist < 0) safe = false;
-                    }
-                    if (safe) {
+                    GameState temp_state;
+                    temp_state.copy_as(game_state);
+                    execute_operation(temp_state, my_seat, Operation::move_army(general->position, plan->plan[0].second, plan->army_used));
+
+                    Attack_searcher searcher(1-my_seat, temp_state);
+                    if (!searcher.search()) {
                         logger.log(LOG_LEVEL_INFO, "\t[Militia] Directly calling for militia to occupy %s, plan size %d", best_well_obj->position.str().c_str(), plan->plan.size());
                         militia_plan.emplace(*plan);
                         next_action_index = 0;
                         continue; // 将领等待1回合
-                    }
+                    } else logger.log(LOG_LEVEL_INFO, "\t[Militia] Cannot directly occupy %s due to enemy threat", best_well_obj->position.str().c_str());
                 }
             }
 
@@ -528,18 +527,14 @@ private:
                 }
             } else if (strategy.type == General_strategy_type::OCCUPY) {
                 const Coord& target = strategy.target.coord;
-                Dist_map dist_map(game_state, target, Path_find_config{2.0, game_state.has_swamp_tech(my_seat)});
-                Direction dir = dist_map.direction_to_origin(general->position);
-                Coord next_pos = general->position + DIRECTION_ARR[dir];
-
-                const Cell& next_cell = game_state[next_pos];
-                int next_cell_army = ceil(next_cell.army * game_state.defence_multiplier(next_pos));
 
                 const Generals* enemy = strategy.target.general;
                 const Critical_tactic& tactic = strategy.target.danger->tactic;
 
                 // 已经到旁边了就直接占领
-                if (next_pos == target) {
+                if (general->position.dist_to(target) == 1) {
+                    const Cell& next_cell = game_state[target];
+                    int next_cell_army = ceil(next_cell.army * game_state.defence_multiplier(target));
                     bool safe = true;
                     if (enemy) {
                         Deterrence_analyzer enemy_deter(enemy, general, game_state.coin[1-my_seat], game_state);
@@ -548,9 +543,9 @@ private:
                     }
                     // 能占就占
                     if (safe && curr_army - 1 > next_cell_army) {
-                        add_operation(Operation::move_army(general->position, dir, next_cell_army + 1));
+                        add_operation(Operation::move_army(general->position, from_coord(general->position, target), next_cell_army + 1));
                         remain_move_count -= 1;
-                    } else logger.log(LOG_LEVEL_INFO, "\t[Occupy] General at %s -> %s, but not safe", general->position.str().c_str(), next_pos.str().c_str());
+                    } else logger.log(LOG_LEVEL_INFO, "\t[Occupy] General at %s -> %s, but not safe", general->position.str().c_str(), target.str().c_str());
                     continue;
                 }
 
@@ -560,33 +555,46 @@ private:
                     continue;
                 }
 
-                // 不踏入危险区，可能会跟direction_to_origin冲突
-                if (enemy && Dist_map::effect_dist(next_pos, enemy->position, tactic.can_rush, game_state.get_mobility(1-my_seat)) < 0) {
-                    // 如果民兵能占领就找民兵
-                    if (strategy.type == General_strategy_type::OCCUPY && (!militia_plan || militia_plan->target->position != target)) {
-                        Militia_analyzer analyzer(game_state);
-                        auto plan = analyzer.search_plan_from_provider(game_state[target].generals, game_state.generals[my_seat]);
-                        // 首先兵要足够，其次不能太远
-                        if (plan && plan->army_used <= curr_army - 1 && plan->plan.size() <= 8 &&
-                            (curr_army - plan->army_used >= deterrence_analyzer->min_army * 1.2 || (plan->plan.size() <= 3 && plan->army_used <= 0.4 * curr_army))) {
-                            logger.log(LOG_LEVEL_INFO, "\t[Occupy] Calling for militia to occupy %s, plan size %d", target.str().c_str(), plan->plan.size());
-                            militia_plan.emplace(*plan);
-                            next_action_index = 0;
-                            continue;
-                        }
+                // 否则进行移动搜索
+                logger.log(LOG_LEVEL_DEBUG, "\t[Occupy] Move search test:");
+                Maingeneral_mover mover(game_state, std::min(general->mobility_level, remain_move_count), target);
+                auto move_plans = mover.search();
+                for (const auto& move_plan : move_plans) {
+                    logger.log(LOG_LEVEL_DEBUG, "\t\t[Occupy] Move plan: %s", move_plan.c_str());
+                }
+
+                // 再根据传统Danger方式进行过滤
+                if (enemy) for (auto it = move_plans.begin(); it != move_plans.end(); ) {
+                    if (Dist_map::effect_dist(it->destination, enemy->position, tactic.can_rush, game_state.get_mobility(1-my_seat)) < 0) {
+                        logger.log(LOG_LEVEL_DEBUG, "\t\t[Occupy] Plan filtered by danger zone: %s", it->c_str());
+                        move_plans.erase(it);
+                    } else ++it;
+                }
+
+                // 如果最优行动存在
+                if (move_plans.size() && move_plans[0].step_count) {
+                    const Move_plan& plan = move_plans[0];
+                    for (const Operation& op : plan.ops) {
+                        logger.log(LOG_LEVEL_INFO, "\t[Occupy] Plan step: %s", op.str().c_str());
+                        add_operation(op);
                     }
-
-                    logger.log(LOG_LEVEL_INFO, "\tGeneral %s avoiding danger zone %s", general->position.str().c_str(), next_pos.str().c_str());
-                    continue;
+                    remain_move_count -= plan.step_count;
                 }
-
-                // 否则再往前走一步
-                logger.log(LOG_LEVEL_INFO, "\t[Occupy] General at %s -> %s", general->position.str().c_str(), next_pos.str().c_str());
-                if (curr_army > 1 && (curr_army - 1 > (next_cell.player == my_seat ? 0 : next_cell.army))) {
-                    add_operation(Operation::move_army(general->position, dir, curr_army - 1));
-                    add_operation(Operation::move_generals(strategy.general_id, next_pos));
-                    remain_move_count -= 1;
+                // 反之尝试分兵占领
+                else if (!militia_plan || militia_plan->target->position != target) {
+                    Militia_analyzer analyzer(game_state);
+                    auto plan = analyzer.search_plan_from_provider(game_state[target].generals, game_state.generals[my_seat]);
+                    // 首先兵要足够，其次不能太远
+                    if (plan && plan->army_used <= curr_army - 1 && plan->plan.size() <= 8 &&
+                        (curr_army - plan->army_used >= deterrence_analyzer->min_army * 1.2 || (plan->plan.size() <= 3 && plan->army_used <= 0.4 * curr_army))) {
+                        logger.log(LOG_LEVEL_INFO, "\t[Occupy] Calling for militia to occupy %s, plan size %d", target.str().c_str(), plan->plan.size());
+                        militia_plan.emplace(*plan);
+                        next_action_index = 0;
+                        continue;
+                    }
                 }
+                // 否则无事可做
+                else logger.log(LOG_LEVEL_INFO, "\t[Occupy] General at %s has no valid move to well %s", general->position.str().c_str(), target.str().c_str());
             } else if (strategy.type == General_strategy_type::ATTACK) {
                 const Generals* enemy = strategy.target.general;
                 Dist_map dist_map(game_state, enemy->position, Path_find_config{1.0, game_state.has_swamp_tech(my_seat)});
@@ -596,71 +604,104 @@ private:
                     continue;
                 }
 
-                Direction dir = dist_map.direction_to_origin(general->position);
-                Coord next_pos = general->position + DIRECTION_ARR[dir];
-                const Cell& next_cell = game_state[next_pos];
-                if (curr_army - 1 <= (next_cell.player == my_seat ? 0 : next_cell.army)) continue;
-
-                // 看看假如走过去会发生什么
-                GameState new_state;
-                new_state.copy_as(game_state);
-                execute_operation(new_state, my_seat, Operation::move_army(general->position, dir, curr_army - 1));
-                execute_operation(new_state, my_seat, Operation::move_generals(strategy.general_id, next_pos));
-                Attack_searcher searcher(1-my_seat, new_state);
-                auto plan = searcher.search();
-                if (plan) {
-                    logger.log(LOG_LEVEL_INFO, "\t[Attack] If general move to %s, avoiding:", next_pos.str().c_str());
-                    for (const auto& step : *plan) logger.log(LOG_LEVEL_INFO, "\t\t%s", step.str().c_str());
-                    continue;
+                // 进行移动搜索
+                logger.log(LOG_LEVEL_DEBUG, "\t[Attack] Move search:");
+                Maingeneral_mover mover(game_state, std::min(general->mobility_level, remain_move_count), enemy->position);
+                auto move_plans = mover.search();
+                for (const auto& move_plan : move_plans) {
+                    logger.log(LOG_LEVEL_DEBUG, "\t\t[Attack] Move plan: %s", move_plan.c_str());
                 }
 
                 // 没问题就往前走一步
-                assert(curr_army > 1);
-                logger.log(LOG_LEVEL_INFO, "\t[Attack] General at %s -> %s", general->position.str().c_str(), next_pos.str().c_str());
-                add_operation(Operation::move_army(general->position, dir, curr_army - 1));
-                add_operation(Operation::move_generals(strategy.general_id, next_pos));
-                remain_move_count -= 1;
+                if (move_plans.size() && move_plans[0].step_count) {
+                    const Move_plan& plan = move_plans[0];
+                    for (const Operation& op : plan.ops) {
+                        logger.log(LOG_LEVEL_INFO, "\t[Attack] Plan step: %s", op.str().c_str());
+                        add_operation(op);
+                    }
+                    remain_move_count -= plan.step_count;
+                } else logger.log(LOG_LEVEL_INFO, "\t[Attack] General at %s cannot reach enemy %s", general->position.str().c_str(), enemy->position.str().c_str());
             } else if (strategy.type == General_strategy_type::RETREAT) {
                 const Generals* enemy = strategy.target.general;
                 const Critical_tactic& tactic = strategy.target.danger->tactic;
+                Move_cost_cfg move_cfg(0.1, 0, -1); // 距离敌人越远越好
 
-                // 寻找能走到的最大有效距离
-                Coord best_pos{-1, -1};
-                int max_eff_dist = Dist_map::effect_dist(general->position, enemy->position, tactic.can_rush, game_state.get_mobility(1-my_seat));
-                for (int dir = 0; dir < DIRECTION_COUNT; ++dir) {
-                    Coord next_pos = general->position + DIRECTION_ARR[dir];
-                    if (!next_pos.in_map() || !game_state.can_general_step_on(next_pos, my_seat)) continue;
-                    if (curr_army - 1 <= -game_state.eff_army(next_pos, my_seat)) continue;
-
-                    int eff_dist = Dist_map::effect_dist(next_pos, enemy->position, tactic.can_rush, game_state.get_mobility(1-my_seat));
-                    logger.log(LOG_LEVEL_INFO, "[Retreat] \tNext pos %s, eff dist %d", next_pos.str().c_str(), eff_dist);
-                    if (eff_dist > max_eff_dist) {
-                        best_pos = next_pos;
-                        max_eff_dist = eff_dist;
-                    }
+                // 进行移动搜索
+                logger.log(LOG_LEVEL_DEBUG, "\t[Retreat] Move search:");
+                Maingeneral_mover mover(game_state, std::min(general->mobility_level, remain_move_count), enemy->position);
+                mover << move_cfg;
+                auto move_plans = mover.search();
+                for (const auto& move_plan : move_plans) {
+                    logger.log(LOG_LEVEL_DEBUG, "\t\t[Retreat] Move plan: %s", move_plan.c_str());
                 }
 
-                // 尝试移动（没有检查兵数的问题）
-                if (best_pos.in_map()) {
-                    if (curr_army > 1) {
-                        add_operation(Operation::move_army(general->position, from_coord(general->position, best_pos), curr_army - 1));
-                        remain_move_count -= 1;
+                // 如果最优行动存在，则执行
+                if (move_plans.size() && move_plans[0].step_count) {
+                    const Move_plan& plan = move_plans[0];
+                    for (const Operation& op : plan.ops) {
+                        logger.log(LOG_LEVEL_INFO, "\t[Retreat] Plan step: %s", op.str().c_str());
+                        add_operation(op);
                     }
-                    add_operation(Operation::move_generals(strategy.general_id, best_pos));
-                    logger.log(LOG_LEVEL_INFO, "[Retreat] General at %s -> %s, dist -> %d", general->position.str().c_str(), best_pos.str().c_str(), max_eff_dist);
+                    remain_move_count -= plan.step_count;
+                    continue;
                 }
-                // 找不到解，尝试升级防御
-                if (max_eff_dist < 0) {
-                    Deterrence_analyzer analyzer(enemy, general, game_state.coin[1-my_seat], game_state);
 
-                    // 假如是真的威胁，则升级防御
-                    if (analyzer.rush_tactic && oil_after_op >= general->defence_upgrade_cost()) {
+                // 否则尝试升级防御
+                if (oil_after_op >= general->defence_upgrade_cost()) {
+                    logger.log(LOG_LEVEL_DEBUG, "\t[Retreat] Move search (+defence):");
+                    GameState temp_state;
+                    temp_state.copy_as(game_state);
+                    execute_operation(temp_state, my_seat, Operation::upgrade_generals(general->id, QualityType::DEFENCE));
+
+                    Maingeneral_mover mover(temp_state, std::min(general->mobility_level, remain_move_count), enemy->position);
+                    mover << move_cfg;
+                    auto move_plans = mover.search();
+                    for (const auto& move_plan : move_plans) {
+                        logger.log(LOG_LEVEL_DEBUG, "\t\t[Retreat] Move plan: %s", move_plan.c_str());
+                    }
+
+                    // 如果最优行动存在，则执行
+                    if (move_plans.size() && move_plans[0].step_count) {
+                        const Move_plan& plan = move_plans[0];
                         oil_after_op -= general->defence_upgrade_cost();
                         add_operation(Operation::upgrade_generals(general->id, QualityType::DEFENCE));
-                        logger.log(LOG_LEVEL_INFO, "[Retreat] General at %s upgrade defence due to danger", general->position.str().c_str());
+                        for (const Operation& op : plan.ops) {
+                            logger.log(LOG_LEVEL_INFO, "\t[Retreat] Plan step: %s", op.str().c_str());
+                            add_operation(op);
+                        }
+                        remain_move_count -= plan.step_count;
+                        continue;
                     }
                 }
 
+                // 否则尝试升级行动力
+                if (general->movement_tire() == 0 && oil_after_op >= general->movement_upgrade_cost()) {
+                    logger.log(LOG_LEVEL_DEBUG, "\t[Retreat] Move search (+mobility):");
+                    GameState temp_state;
+                    temp_state.copy_as(game_state);
+                    execute_operation(temp_state, my_seat, Operation::upgrade_generals(general->id, QualityType::MOBILITY));
+
+                    Maingeneral_mover mover(temp_state, std::min(GENERAL_MOVEMENT_VALUES[general->movement_tire()+1], remain_move_count), enemy->position);
+                    mover << move_cfg; // 距离敌人越远越好
+                    auto move_plans = mover.search();
+                    for (const auto& move_plan : move_plans) {
+                        logger.log(LOG_LEVEL_DEBUG, "\t\t[Retreat] Move plan: %s", move_plan.c_str());
+                    }
+
+                    // 如果最优行动存在，则执行
+                    if (move_plans.size() && move_plans[0].step_count) {
+                        const Move_plan& plan = move_plans[0];
+                        oil_after_op -= general->movement_upgrade_cost();
+                        add_operation(Operation::upgrade_generals(general->id, QualityType::MOBILITY));
+                        for (const Operation& op : plan.ops) {
+                            logger.log(LOG_LEVEL_INFO, "\t[Retreat] Plan step: %s", op.str().c_str());
+                            add_operation(op);
+                        }
+                        remain_move_count -= plan.step_count;
+                        continue;
+                    }
+                }
+                logger.log(LOG_LEVEL_INFO, "\t[Retreat] General at %s cannot retreat", general->position.str().c_str());
             } else assert(!"Invalid strategy type");
         }
     }
