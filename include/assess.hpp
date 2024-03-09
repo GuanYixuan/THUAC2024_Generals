@@ -33,7 +33,7 @@ struct Path_find_config {
 
 };
 
-// 寻路算法类
+// 距离计算器
 class Dist_map {
 public:
     static constexpr double MAX_DIST = 1000 * col * row;
@@ -78,6 +78,8 @@ private:
         bool operator> (const __Queue_Node& other) const noexcept { return dist > other.dist; }
     };
 };
+
+// **************************************** 攻击搜索相关声明 ****************************************
 
 // 单将一步杀的不同类型（rush由距离直接决定，故不在此体现）
 struct Base_tactic {
@@ -255,6 +257,71 @@ private:
     static std::vector<Skill_discharger> skill_table;
 };
 
+// **************************************** 移动搜索相关声明 ****************************************
+
+// 移动代价配置
+struct Move_cost_cfg {
+    double step_cost;
+    double desert_cost;
+    double target_distance_cost;
+
+    Move_cost_cfg(double step_cost, double desert_cost, double target_distance_cost) noexcept :
+        step_cost(step_cost), desert_cost(desert_cost), target_distance_cost(target_distance_cost) {}
+};
+struct Move_plan {
+    Coord destination;
+    Operation_list ops;
+
+    int step_count;
+    double step_cost;
+    double desert_cost;
+    double target_distance_cost;
+
+    Move_plan(Coord destination, int player) noexcept :
+        destination(destination), ops(player), step_count(0), step_cost(0), desert_cost(0), target_distance_cost(0) {}
+
+    bool operator< (const Move_plan& other) const noexcept { return ops.score < other.ops.score; }
+    bool operator> (const Move_plan& other) const noexcept { return ops.score > other.ops.score; }
+
+    const char* c_str() const noexcept {
+        static char buf[256];
+        std::snprintf(buf, sizeof(buf), "%s, steps=%d, step_cost=%.0f, desert_cost=%.0f, target_distance_cost=%.0f",
+                      destination.str().c_str(), step_count, step_cost, desert_cost, target_distance_cost);
+        return buf;
+    }
+};
+
+// 主将移动搜索算法
+class Maingeneral_mover {
+public:
+    // 最大步数
+    int steps_available;
+    // 移动目的地
+    std::optional<Coord> target_pos;
+
+    // 移动代价配置
+    Move_cost_cfg cost_cfg;
+    // 寻路配置
+    Path_find_config path_cfg;
+
+    // 构造函数，目前默认立场是我方
+    Maingeneral_mover(const GameState& state, int steps_available, std::optional<Coord> target_pos) noexcept :
+        state(state), steps_available(steps_available), target_pos(target_pos),
+        cost_cfg(1, 2, 4),
+        path_cfg(1.0, state.has_swamp_tech(my_seat), true) {}
+
+    // 参数设置函数
+    Maingeneral_mover& operator<< (const Move_cost_cfg& cfg) noexcept { cost_cfg = cfg; return *this; }
+
+    // 进行寻路搜索
+    std::vector<Move_plan> search() const noexcept;
+
+private:
+    const GameState& state;
+};
+
+// **************************************** 民兵分析器相关声明 ****************************************
+
 // 民兵“根据地”：一块连起来的有兵区域
 class Militia_area {
 public:
@@ -354,7 +421,7 @@ private:
     };
 };
 
-// **************************************** 寻路部分实现 ****************************************
+// **************************************** 距离计算器实现 ****************************************
 
 Dist_map::Dist_map(const GameState& board, const Coord& origin, const Path_find_config& cfg) noexcept : origin(origin), cfg(cfg), board(board) {
     // 初始化
@@ -488,6 +555,7 @@ std::optional<std::vector<Operation>> Attack_searcher::search() const noexcept {
             Coord pos{x, y};
             if (pos != general->position &&
                 (attacker_dist[pos] > general->mobility_level || state[pos].player != attacker_seat || !state.can_general_step_on(pos, attacker_seat))) continue;
+            // 其实需要检查整条路径
             gather_points.push_back(pos);
         }
 
@@ -566,9 +634,11 @@ std::optional<std::vector<Operation>> Attack_searcher::search() const noexcept {
                     attack_ops.insert(attack_ops.begin(), Operation::move_generals(general->id, gather_point));
 
                 // 最后需要确定能够找到用于释放技能的将领，并重新核算费用
-                logger.log(LOG_LEVEL_DEBUG, "\t[%s] skill_cost = %d", tactic.str().c_str(), skill_cost);
-                logger.log(LOG_LEVEL_DEBUG, "\t\tGather at %s, Landing at %s, army_left = %d",
-                           gather_point.str().c_str(), landing_point.str().c_str(), army_left.back());
+                if (attacker_seat == my_seat || true) {
+                    logger.log(LOG_LEVEL_DEBUG, "\t[%s] skill_cost = %d", tactic.str().c_str(), skill_cost);
+                    logger.log(LOG_LEVEL_DEBUG, "\t\tGather at %s, Landing at %s, army_left = %d",
+                               gather_point.str().c_str(), landing_point.str().c_str(), army_left.back());
+                }
 
                 // 重新计算技能释放表（考虑将领位置）
                 skill_table.clear();
@@ -610,10 +680,12 @@ std::optional<std::vector<Operation>> Attack_searcher::search() const noexcept {
 
                 // 排序技能释放表
                 std::sort(skill_table.begin(), skill_table.end(), std::greater<Skill_discharger>());
-                logger.log(LOG_LEVEL_DEBUG, "\t\tDischargers:");
-                for (const Skill_discharger& discharger : skill_table) {
-                    logger.log(LOG_LEVEL_DEBUG, "\t\t\t%s, general_available = %d, can_command = %d, can_cover_enemy = %d",
-                               discharger.pos.str().c_str(), discharger.general_available(), discharger.can_command, discharger.can_cover_enemy);
+                if (attacker_seat == my_seat || true) {
+                    logger.log(LOG_LEVEL_DEBUG, "\t\tDischargers:");
+                    for (const Skill_discharger& discharger : skill_table) {
+                        logger.log(LOG_LEVEL_DEBUG, "\t\t\t%s, general_available = %d, can_command = %d, can_cover_enemy = %d",
+                                   discharger.pos.str().c_str(), discharger.general_available(), discharger.can_command, discharger.can_cover_enemy);
+                    }
                 }
 
                 // 暂时先不考虑路径上的格子（以及落点处不能召唤副将）
@@ -643,7 +715,6 @@ std::optional<std::vector<Operation>> Attack_searcher::search() const noexcept {
                             attack_ops.insert(attack_ops.begin() + (attack_ops.size() - 1), Operation::generals_skill(general_id, SkillType::STRIKE, enemy_general->position));
                         }
                     }
-                    if (skill_count) logger.log(LOG_LEVEL_DEBUG, "\t\t\tDischarger at %s, skill_count = %d", discharger.pos.str().c_str(), skill_count);
                     // 假如要召唤将领
                     if (skill_count && general_id == next_general_id) {
                         spawn_count++;
@@ -656,16 +727,108 @@ std::optional<std::vector<Operation>> Attack_searcher::search() const noexcept {
                 if (!remain_skills.skill_discharged() || skill_cost + spawn_count * SPAWN_GENERAL_COST > oil) continue;
 
                 // 可攻击，导出行动
-                logger.log(LOG_LEVEL_INFO, "\t\t\tComfirmed:[%s] Army left %d, path size %d", tactic.str().c_str(), army_left.back(), path.size()-1);
+                if (attacker_seat == my_seat)
+                    logger.log(LOG_LEVEL_INFO, "\t\t\tComfirmed:[%s] Army left %d, path size %d", tactic.str().c_str(), army_left.back(), path.size()-1);
                 return attack_ops;
             }
         }
     }
-    logger.log(LOG_LEVEL_INFO, "No attack plan found, till_landing = %d, till_check_discharger = %d", atks_till_landing, atks_till_check_discharger);
+    if (atks_till_landing > 100)
+        logger.log(LOG_LEVEL_INFO, "No attack plan found, till_landing = %d, till_check_discharger = %d", atks_till_landing, atks_till_check_discharger);
     return std::nullopt;
 }
 
-// *************************************** 民兵分析器实现 ***************************************
+// **************************************** 移动搜索实现 ****************************************
+
+std::vector<Move_plan> Maingeneral_mover::search() const noexcept {
+    static std::vector<int> army_left{};
+
+    // 参数初始化
+    std::vector<Move_plan> ret;
+    const MainGenerals* my_general = dynamic_cast<const MainGenerals*>(state.generals[my_seat]);
+    std::optional<Dist_map> target_dist = target_pos ? std::make_optional<Dist_map>(state, *target_pos, path_cfg) : std::nullopt;
+
+    // 计算主将的可行走范围
+    static std::vector<Coord> avail_terminals{};
+    Dist_map general_dist(state, my_general->position, Path_find_config(1.0, state.has_swamp_tech(my_seat)));
+
+    avail_terminals.clear();
+    for (int x = 0; x < Constant::col; ++x) for (int y = 0; y < Constant::row; ++y) {
+        Coord pos{x, y};
+        if (pos != my_general->position && (general_dist[pos] > steps_available || !state.can_general_step_on(pos, my_seat))) continue;
+        avail_terminals.push_back(pos);
+    }
+
+    // 对范围内的每个格子单独考虑
+    for (const Coord& terminal : avail_terminals) {
+        std::vector<Coord> path{general_dist.path_to_origin(terminal)};
+        std::reverse(path.begin(), path.end());
+
+        army_left.clear();
+        army_left.push_back(state[my_general->position].army);
+
+        Move_plan move_plan(terminal, my_seat);
+
+        // 模拟计算途径路径每一格时的军队数（落地点也需要算）
+        bool calc_pass = true;
+        for (int j = 1, sjz = path.size(); j < sjz; ++j) {
+            const Coord& from = path[j - 1], to = path[j];
+            const Cell& dest = state[to];
+
+            if (dest.player == my_seat) army_left.push_back(army_left.back() - 1 + dest.army);
+            else {
+                double local_attack_mult = state.attack_multiplier(from, my_seat);
+                double local_defence_mult = state.defence_multiplier(to);
+
+                // 假定所有技能仅对敌方主将格有效（这样可以放宽各个将领位置的限制）
+                int local_army = dest.army;
+                double vs = (army_left.back() - 1) * local_attack_mult - local_army * local_defence_mult;
+                if (vs <= 0) {
+                    calc_pass = false;
+                    break;
+                }
+
+                army_left.push_back(std::ceil(vs / local_attack_mult));
+            }
+            // 创建操作对象
+            if (army_left[j-1] - 1 > 0) move_plan.ops += Operation::move_army(from, from_coord(from, to), army_left[j-1] - 1); // 有兵才移动
+        }
+        if (!calc_pass) continue;
+
+        // 把主将移动也加上
+        if (terminal != my_general->position)
+            move_plan.ops += Operation::move_generals(my_general->id, terminal);
+
+        // 然后开始计算安全性
+        GameState temp_state;
+        temp_state.copy_as(state);
+        bool exec_pass = execute_operations(temp_state, move_plan.ops);
+        if (!exec_pass) {
+            logger.log(LOG_LEVEL_ERROR, "\t\tMove plan execution failed, ops:");
+            for (const Operation& op : move_plan.ops) logger.log(LOG_LEVEL_ERROR, "\t\t\t%s", op.str().c_str());
+            continue;
+        }
+
+        Attack_searcher searcher(1-my_seat, temp_state);
+        if (searcher.search()) continue;// 会被攻击则舍弃
+
+        // 否则计算各类cost
+        move_plan.step_count = path.size() - 1;
+        move_plan.desert_cost = state[terminal].type == CellType::DESERT ? cost_cfg.desert_cost : 0;
+        move_plan.step_cost = (path.size() - 1) * cost_cfg.step_cost;
+        if (target_dist) move_plan.target_distance_cost = (*target_dist)[terminal] * cost_cfg.target_distance_cost;
+        move_plan.ops.score = - (move_plan.desert_cost + move_plan.step_cost + move_plan.target_distance_cost);
+
+        logger.log(LOG_LEVEL_DEBUG, "\t\t[Search] New move plan: %s", move_plan.c_str());
+        ret.push_back(move_plan);
+    }
+
+    // 排序并输出
+    std::sort(ret.begin(), ret.end(), std::greater<Move_plan>());
+    return ret;
+}
+
+// **************************************** 民兵分析器实现 ****************************************
 
 Militia_analyzer::Militia_analyzer(const GameState& state) noexcept : state(state) {
     // 寻找所有根据地
