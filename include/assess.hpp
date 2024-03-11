@@ -223,7 +223,7 @@ public:
     // 指定攻击搜索器的阵营和基于的状态
     Attack_searcher(int attacker_seat, const GameState& state) noexcept : attacker_seat(attacker_seat), state(state) {}
     // 利用攻击搜索器进行一次完整的单将攻击搜索，仅返回一个结果
-    std::optional<std::vector<Operation>> search() const noexcept;
+    std::optional<std::vector<Operation>> search(int extra_oil = 0) const noexcept;
 
 private:
     const int attacker_seat;
@@ -514,13 +514,13 @@ int Dist_map::effect_dist(const Coord& pos, const Coord& general_pos, bool can_r
 int Attack_searcher::max_borrow_count = 0;
 std::vector<Attack_searcher::Skill_discharger> Attack_searcher::skill_table = {};
 
-std::optional<std::vector<Operation>> Attack_searcher::search() const noexcept {
+std::optional<std::vector<Operation>> Attack_searcher::search(int extra_oil) const noexcept {
     static std::vector<int> army_left{};
     static std::vector<Coord> landing_points{};
     static std::vector<Operation> attack_ops{};
 
     // 参数初始化
-    int oil = state.coin[attacker_seat];
+    int oil = state.coin[attacker_seat] + extra_oil;
     int attacker_mobility = state.tech_level[attacker_seat][static_cast<int>(TechType::MOBILITY)];
     const MainGenerals* enemy_general = dynamic_cast<const MainGenerals*>(state.generals[1 - attacker_seat]);
     if (!state.can_soldier_step_on(enemy_general->position, attacker_seat)) return std::nullopt; // 排除敌方主将在沼泽而走不进的情况
@@ -745,6 +745,7 @@ std::vector<Move_plan> Maingeneral_mover::search() const noexcept {
 
     // 参数初始化
     std::vector<Move_plan> ret;
+    int extra_oil = state.calc_oil_production(1-my_seat) * 2; // 额外的油量
     const MainGenerals* my_general = dynamic_cast<const MainGenerals*>(state.generals[my_seat]);
     std::optional<Dist_map> target_dist = target_pos ? std::make_optional<Dist_map>(state, *target_pos, path_cfg) : std::nullopt;
 
@@ -810,7 +811,7 @@ std::vector<Move_plan> Maingeneral_mover::search() const noexcept {
         }
 
         Attack_searcher searcher(1-my_seat, temp_state);
-        if (searcher.search()) continue;// 会被攻击则舍弃
+        if (searcher.search(extra_oil)) continue;// 会被攻击则舍弃
 
         // 否则计算各类cost
         move_plan.step_count = path.size() - 1;
