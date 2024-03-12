@@ -251,10 +251,18 @@ private:
         }
         bool operator> (const Skill_discharger& other) const noexcept { return score() > other.score(); }
     };
-    // 最大借用将领数
-    static int max_borrow_count;
     // 技能释放表
     static std::vector<Skill_discharger> skill_table;
+
+    // 汇合方式
+    struct Gather_point {
+        // 汇合位置
+        Coord pos;
+        // 走至集合点消耗的【军队】行动力
+        int army_steps;
+
+        Gather_point(const Coord& pos, int army_steps) noexcept : pos(pos), army_steps(army_steps) {}
+    };
 };
 
 // **************************************** 移动搜索相关声明 ****************************************
@@ -308,7 +316,7 @@ public:
     Maingeneral_mover(const GameState& state, int steps_available, std::optional<Coord> target_pos) noexcept :
         state(state), steps_available(steps_available), target_pos(target_pos),
         cost_cfg(1, 2, 4),
-        path_cfg(1.0, state.has_swamp_tech(my_seat), true) {}
+        path_cfg(3.0, state.has_swamp_tech(my_seat), true) {}
 
     // 参数设置函数
     Maingeneral_mover& operator<< (const Move_cost_cfg& cfg) noexcept { cost_cfg = cfg; return *this; }
@@ -511,7 +519,6 @@ int Dist_map::effect_dist(const Coord& pos, const Coord& general_pos, bool can_r
 
 // **************************************** 攻击搜索器实现 ****************************************
 
-int Attack_searcher::max_borrow_count = 0;
 std::vector<Attack_searcher::Skill_discharger> Attack_searcher::skill_table = {};
 
 std::optional<std::vector<Operation>> Attack_searcher::search(int extra_oil) const noexcept {
@@ -547,30 +554,42 @@ std::optional<std::vector<Operation>> Attack_searcher::search(int extra_oil) con
         if (state[general->position].army <= 1) continue;
 
         // 搜索汇合点
-        static std::vector<Coord> gather_points{};
+        static std::vector<Gather_point> gather_points{};
         Dist_map attacker_dist(state, general->position, Path_find_config(1.0, state.has_swamp_tech(attacker_seat)));
-
         gather_points.clear();
+
+        // 不携带军队的汇合点
         for (int x = 0; x < Constant::col; ++x) for (int y = 0; y < Constant::row; ++y) {
             Coord pos{x, y};
             if (pos != general->position &&
                 (attacker_dist[pos] > general->mobility_level || state[pos].player != attacker_seat || !state.can_general_step_on(pos, attacker_seat))) continue;
             // 其实需要检查整条路径
-            gather_points.push_back(pos);
+            gather_points.emplace_back(pos, 0);
+        }
+        // 带军队的汇合点，目前限制在主将附近4格
+        for (int dir = 0; dir < DIRECTION_COUNT; ++dir) {
+            Coord pos = general->position + DIRECTION_ARR[dir];
+            if (!pos.in_map() || state[pos].player != attacker_seat || !state.can_general_step_on(pos, attacker_seat)) continue;
+            gather_points.emplace_back(pos, 1);
         }
 
         // 对每个汇合点以及每种连招
-        for (const Coord& gather_point : gather_points)
+        for (const Gather_point& gather : gather_points)
         for (const Base_tactic& base_tactic : avail_base_tactics) {
+            Coord gather_point = gather.pos;
+            int gather_point_army = state[gather_point].army;
+            int remain_move = attacker_mobility - gather.army_steps;
+            if (gather.army_steps) gather_point_army += state[general->position].army - 1; // 加上主将的军队数量
+
             // 基本油量检查已经提前完成
             // 根据精细距离决定是否需要rush
-            Critical_tactic tactic(enemy_dist[gather_point] > attacker_mobility, base_tactic);
+            Critical_tactic tactic(enemy_dist[gather_point] > remain_move, base_tactic);
             int skill_cost = tactic.skill_cost();
             if (oil < skill_cost) continue; // 根据rush信息再次检查油量
-            if (tactic.can_rush && state[gather_point].army <= 1) continue; // gather_point我方军队数量不足，无法rush
+            if (tactic.can_rush && gather_point_army <= 1) continue; // gather_point我方军队数量不足，无法rush
 
             // 距离检查
-            int eff_dist = Dist_map::effect_dist(gather_point, enemy_general->position, tactic.can_rush, attacker_mobility);
+            int eff_dist = Dist_map::effect_dist(gather_point, enemy_general->position, tactic.can_rush, remain_move);
             if (eff_dist >= 0) continue;
 
             atks_till_landing++;
@@ -580,7 +599,7 @@ std::optional<std::vector<Operation>> Attack_searcher::search(int extra_oil) con
             else for (int x = std::max(gather_point.x - Constant::GENERAL_ATTACK_RADIUS, 0); x <= std::min(gather_point.x + Constant::GENERAL_ATTACK_RADIUS, Constant::col - 1); ++x)
                 for (int y = std::max(gather_point.y - Constant::GENERAL_ATTACK_RADIUS, 0); y <= std::min(gather_point.y + Constant::GENERAL_ATTACK_RADIUS, Constant::row - 1); ++y) {
                     Coord pos(x, y);
-                    if (enemy_dist[pos] > attacker_mobility || !state.can_general_step_on(pos, attacker_seat)) continue;
+                    if (enemy_dist[pos] > remain_move || !state.can_general_step_on(pos, attacker_seat)) continue;
                     landing_points.push_back(pos);
                 }
 
@@ -588,10 +607,11 @@ std::optional<std::vector<Operation>> Attack_searcher::search(int extra_oil) con
             for (const Coord& landing_point : landing_points) {
                 std::vector<Coord> path{enemy_dist.path_to_origin(landing_point)};
                 if (tactic.can_rush) path.insert(path.begin(), gather_point);
+                if (gather.army_steps) path.insert(path.begin(), general->position); // 需要将军队移动到汇合点
 
                 army_left.clear();
                 attack_ops.clear();
-                army_left.push_back(state.eff_army(gather_point, attacker_seat));
+                army_left.push_back(state[path.front()].army);
 
                 // 模拟计算途径路径每一格时的军队数（落地点也需要算）
                 bool calc_pass = true;
@@ -623,7 +643,7 @@ std::optional<std::vector<Operation>> Attack_searcher::search(int extra_oil) con
                         army_left.push_back(std::ceil(vs / local_attack_mult));
                     }
                     // 创建操作对象（包括rush技能）
-                    if (j == 1 && tactic.can_rush) attack_ops.push_back(Operation::generals_skill(general->id, SkillType::RUSH, to));
+                    if (to == landing_point && tactic.can_rush) attack_ops.push_back(Operation::generals_skill(general->id, SkillType::RUSH, to));
                     else if (army_left[j-1] - 1 > 0) attack_ops.push_back(Operation::move_army(from, from_coord(from, to), army_left[j-1] - 1)); // 有兵才移动
                 }
                 if (!calc_pass) continue;
