@@ -569,7 +569,7 @@ std::optional<std::vector<Operation>> Attack_searcher::search(int extra_oil) con
         // 带军队的汇合点，目前限制在主将附近4格
         for (int dir = 0; dir < DIRECTION_COUNT; ++dir) {
             Coord pos = general->position + DIRECTION_ARR[dir];
-            if (!pos.in_map() || state[pos].player != attacker_seat || !state.can_general_step_on(pos, attacker_seat)) continue;
+            if (!pos.in_map() || !state.can_general_step_on(pos, attacker_seat)) continue;
             gather_points.emplace_back(pos, 1);
         }
 
@@ -650,14 +650,23 @@ std::optional<std::vector<Operation>> Attack_searcher::search(int extra_oil) con
                 atks_till_check_discharger++;
 
                 // 补充移动到汇合点的操作
-                if (gather_point != general->position)
-                    attack_ops.insert(attack_ops.begin(), Operation::move_generals(general->id, gather_point));
+                if (gather_point != general->position) {
+                    if (!gather.army_steps) attack_ops.insert(attack_ops.begin(), Operation::move_generals(general->id, gather_point));
+                    else {
+                        auto gather_point_it = std::find_if(attack_ops.begin(), attack_ops.end(),
+                                                            [&](const Operation& op) {
+                                                                return op.opcode == OperationType::MOVE_ARMY && Coord(op.operand[0], op.operand[1]) + DIRECTION_ARR[op.operand[2] - 1] == gather_point;
+                                                            }) + 1;
+                        assert(gather_point_it != attack_ops.end());
+                        attack_ops.insert(gather_point_it, Operation::move_generals(general->id, gather_point));
+                    }
+                }
 
                 // 最后需要确定能够找到用于释放技能的将领，并重新核算费用
                 if (attacker_seat == my_seat || true) {
                     logger.log(LOG_LEVEL_DEBUG, "\t[%s] skill_cost = %d", tactic.str().c_str(), skill_cost);
-                    logger.log(LOG_LEVEL_DEBUG, "\t\tGather at %s, Landing at %s, army_left = %d",
-                               gather_point.str().c_str(), landing_point.str().c_str(), army_left.back());
+                    logger.log(LOG_LEVEL_DEBUG, "\t\tGather at %s (army_steps = %d), Landing at %s, army_left = %d",
+                               gather_point.str().c_str(), gather.army_steps, landing_point.str().c_str(), army_left.back());
                 }
 
                 // 重新计算技能释放表（考虑将领位置）
