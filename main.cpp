@@ -87,6 +87,7 @@ public:
 
     std::optional<Oil_cluster> cluster;
 
+    bool first_oil = true;
     int oil_savings;
     int oil_after_op;
     int remain_move_count;
@@ -199,7 +200,7 @@ public:
 
 private:
     std::vector<Oil_cluster> identify_oil_clusters() const {
-        static constexpr double MIN_ENEMY_DIST = 7.0;
+        static constexpr double MIN_ENEMY_DIST = 8.0;
         static constexpr double MAX_DIST = 5.0;
 
         static constexpr int MIN_CLUSTER_SIZE = 3;
@@ -217,7 +218,7 @@ private:
 
             // 计算距离
             int my_dist_to_center = my_dist[center_well->position];
-            int enemy_dist_to_center = enemy_dist[center_well->position];
+            int enemy_dist_to_center = enemy_dist[center_well->position] / game_state.generals[1 - my_seat]->mobility_level;
             Dist_map dist_map(game_state, center_well->position, {2.0});
 
             // 搜索其它油井
@@ -261,7 +262,7 @@ private:
         int approach_time = (std::min(my_dist[enemy_general->position], enemy_dist[main_general->position]) - 5 - enemy_general->mobility_level) / (main_general->mobility_level + enemy_general->mobility_level);
         int oil_on_approach = oil_after_op + game_state.calc_oil_production(my_seat) * std::max(0, approach_time);
         if (approach_time > 100) oil_on_approach = oil_after_op; // 假如无法碰在一起，认为储油量就是当前量
-        logger.log(LOG_LEVEL_INFO, "[Assess] Approach time: %d, oil on approach: %d", approach_time, oil_on_approach);
+        logger.log(LOG_LEVEL_INFO, "[Assess] Approach time: %d, oil on approach: %d, first = %d", approach_time, oil_on_approach, first_oil);
 
         // 考虑油井升级
         Path_find_config enemy_dist_cfg(1.0, game_state.has_swamp_tech(1-my_seat));
@@ -274,8 +275,9 @@ private:
             int tire = well->production_tire();
             int cost = well->production_upgrade_cost();
             if (tire >= 2 && !unlock_upgrade_3) continue;
-            if (oil_after_op < oil_savings + cost ||
-                oil_on_approach + (Constant::OILWELL_PRODUCTION_VALUES[tire + 1] - Constant::OILWELL_PRODUCTION_VALUES[tire]) * approach_time < oil_savings + cost) continue;
+            if ((oil_after_op < oil_savings + cost ||
+                oil_on_approach + (Constant::OILWELL_PRODUCTION_VALUES[tire + 1] - Constant::OILWELL_PRODUCTION_VALUES[tire]) * approach_time < oil_savings + cost) &&
+                !first_oil) continue;
 
             // 以油井为中心计算到敌方的距离（考虑我方威慑）
             Dist_map dist_map(game_state, well->position, enemy_dist_cfg);
@@ -285,7 +287,9 @@ private:
                 if (enemy->player != 1 - my_seat || dynamic_cast<const OilWell*>(enemy) != nullptr) continue;
                 min_dist = std::min(min_dist, dist_map[enemy->position]);
             }
-            if (min_dist >= 6 + 3 * tire) {
+            if (min_dist >= 6 + 3 * tire || (first_oil && game_state.round <= 15)) {
+                first_oil = false;
+
                 logger.log(LOG_LEVEL_INFO, "[Upgrade] Well %s upgrade to tire %d (min dist %.1f)", well->position.str().c_str(), tire + 1, min_dist);
                 add_operation(Operation::upgrade_generals(well->id, QualityType::PRODUCTION));
                 oil_after_op -= Constant::OILWELL_PRODUCTION_COST[tire];
@@ -305,7 +309,7 @@ private:
             logger.log(LOG_LEVEL_INFO, "[Upgrade] Main general upgrade production to %d", main_general->produce_level);
         }
         // 主将防御升级
-        else if (oil_after_op >= main_general->defence_upgrade_cost() &&
+        else if (unlock_upgrade_3 && oil_after_op >= main_general->defence_upgrade_cost() &&
                  oil_on_approach >= oil_savings + main_general->defence_upgrade_cost() &&
                  game_state[main_general->position].army > (main_general->defence_tire() == 0 ? 40 : 80)) {
 
@@ -361,6 +365,11 @@ private:
             if (curr_army <= 1) continue;
             logger.log(LOG_LEVEL_INFO, "[Assess] General %s with army %d, defence mult %.2f, enemy lookahead oil %d",
                        general->position.str().c_str(), curr_army, defence_mult, enemy_lookahead_oil);
+
+            // 感觉不对就炸
+            if (army_disadvantage && oil_after_op >= std::max(oil_savings - 15, GENERAL_SKILL_COST[SkillType::STRIKE]) &&
+                enemy_general->position.in_attack_range(general->position) && !general->cd(SkillType::STRIKE))
+                    add_operation(Operation::generals_skill(general->id, SkillType::STRIKE, enemy_general->position));
 
             // 考虑是否在危险范围内
             Danger most_danger{100000, nullptr, Critical_tactic(false, BASE_TACTICS[0])};
@@ -488,7 +497,7 @@ private:
             }
 
             // 否则取最近油田
-            if (best_well >= 0 && dist_map[game_state.generals[best_well]->position] < Dist_map::MAX_DIST && (!army_disadvantage || game_state.round < 25)) {
+            if (best_well >= 0 && dist_map[game_state.generals[best_well]->position] < Dist_map::MAX_DIST) {
                 strategies.emplace_back(General_strategy{i, General_strategy_type::OCCUPY, Strategy_target{game_state.generals[best_well]->position, most_danger}});
                 logger.log(LOG_LEVEL_INFO, "[Allocate:occupy] General %s -> well %s", general->position.str().c_str(), game_state.generals[best_well]->position.str().c_str());
                 continue;
@@ -556,16 +565,15 @@ private:
                 logger.log(LOG_LEVEL_DEBUG, "\t[Occupy] Move search:");
                 Maingeneral_mover mover(game_state, std::min(general->mobility_level, remain_move_count), target);
                 auto move_plans = mover.search();
-                for (const auto& move_plan : move_plans) {
-                    logger.log(LOG_LEVEL_DEBUG, "\t\t[Occupy] Move plan: %s", move_plan.c_str());
-                }
 
                 // 再根据传统Danger方式进行过滤
                 if (enemy) for (auto it = move_plans.begin(); it != move_plans.end(); ) {
                     if (Dist_map::effect_dist(it->destination, enemy->position, tactic.can_rush, game_state.get_mobility(1-my_seat)) < 0) {
-                        logger.log(LOG_LEVEL_DEBUG, "\t\t[Occupy] Plan filtered by danger zone: %s", it->c_str());
                         move_plans.erase(it);
                     } else ++it;
+                }
+                for (const auto& move_plan : move_plans) {
+                    logger.log(LOG_LEVEL_DEBUG, "\t\t[Occupy] Move plan: %s", move_plan.c_str());
                 }
 
                 // 如果最优行动存在
@@ -576,6 +584,24 @@ private:
                         add_operation(op);
                     }
                     remain_move_count -= plan.step_count;
+
+                    // 已经到旁边了就直接占领
+                    if (general->position.dist_to(target) == 1 && remain_move_count) {
+                        const Cell& next_cell = game_state[target];
+                        int next_cell_army = ceil(next_cell.army * game_state.defence_multiplier(target));
+                        bool safe = true;
+                        if (enemy) {
+                            Deterrence_analyzer enemy_deter(enemy, general, game_state.coin[1-my_seat], game_state);
+                            if (curr_army - (next_cell_army + 1) < enemy_deter.target_max_army && Dist_map::effect_dist(general->position, enemy->position, true, game_state.get_mobility(1-my_seat)) < 0)
+                                safe = false;
+                        }
+                        // 能占就占
+                        if (safe && curr_army - 1 > next_cell_army) {
+                            add_operation(Operation::move_army(general->position, from_coord(general->position, target), next_cell_army + 1));
+                            remain_move_count -= 1;
+                        } else logger.log(LOG_LEVEL_INFO, "\t[Occupy] General at %s -> %s, but not safe", general->position.str().c_str(), target.str().c_str());
+                        continue;
+                    }
                 }
                 // 反之尝试分兵占领
                 else if (!militia_plan || militia_plan->target->position != target) {
@@ -640,6 +666,36 @@ private:
                     }
                     remain_move_count -= plan.step_count;
                     continue;
+                }
+
+                // 否则尝试空袭一次
+                if (oil_after_op >= GENERAL_SKILL_COST[SkillType::STRIKE] && !general->cd(SkillType::STRIKE) &&
+                    enemy->position.in_attack_range(general->position)) {
+
+                    logger.log(LOG_LEVEL_DEBUG, "\t[Retreat] Move search (+strike):");
+                    GameState temp_state;
+                    temp_state.copy_as(game_state);
+                    execute_operation(temp_state, my_seat, Operation::generals_skill(general->id, SkillType::STRIKE, enemy->position));
+
+                    Maingeneral_mover mover(temp_state, std::min(general->mobility_level, remain_move_count), enemy->position);
+                    mover << move_cfg; // 距离敌人越远越好
+                    auto move_plans = mover.search();
+                    for (const auto& move_plan : move_plans) {
+                        logger.log(LOG_LEVEL_DEBUG, "\t\t[Retreat] Move plan: %s", move_plan.c_str());
+                    }
+
+                    // 如果最优行动存在，则执行
+                    if (move_plans.size() && move_plans[0].step_count) {
+                        const Move_plan& plan = move_plans[0];
+                        oil_after_op -= GENERAL_SKILL_COST[SkillType::STRIKE];
+                        add_operation(Operation::generals_skill(general->id, SkillType::STRIKE, enemy->position));
+                        for (const Operation& op : plan.ops) {
+                            logger.log(LOG_LEVEL_INFO, "\t[Retreat] Plan step: %s", op.str().c_str());
+                            add_operation(op);
+                        }
+                        remain_move_count -= plan.step_count;
+                        continue;
+                    }
                 }
 
                 // 否则尝试升级防御
@@ -719,7 +775,6 @@ private:
 
                 std::optional<Militia_plan> plan = analyzer.search_plan_from_militia(target);
                 if (!plan || plan->gather_steps > 7) continue;
-                if (dynamic_cast<const SubGenerals*>(target) && plan->gather_steps > 5) continue; // 副将不能超过5步
 
                 if (!best_plan) {
                     best_plan.emplace(plan.value());
