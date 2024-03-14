@@ -98,27 +98,35 @@ class DB_handler:
         result2: Tuple[int, int] = self.cursor.fetchone()
         return (result1[0] + result2[0], result1[1] + result2[1])
 
-    def get_stats_for_ai(self, ai: AI) -> List[Tuple[AI, int, int]]:
-        """获取给定AI的对局统计数据，返回一个列表，每个元素是元组(对手AI, 胜利次数, 总对局数)"""
+    @dataclass
+    class __Stats_for_AI_ret:
+        opponent: AI
+        win_count: int
+        total_count: int
+        last_match_time: datetime.datetime
+    def get_stats_for_ai(self, ai: AI) -> List[__Stats_for_AI_ret]:
+        """获取给定AI的对局统计数据，返回一个列表，每个元素是元组(对手AI, 胜利次数, 总对局数, 最后对局时间)"""
         idx = self.get_AI_id(ai)
-        self.cursor.execute("SELECT player_id_0, player_id_1, COUNT(CASE WHEN winner=0 THEN 1 END), COUNT(*) FROM matches WHERE player_id_0=? OR player_id_1=? GROUP BY player_id_0, player_id_1", (idx, idx))
-        results: List[Tuple[int, int, int, int]] = self.cursor.fetchall()
+        self.cursor.execute("SELECT player_id_0, player_id_1, COUNT(CASE WHEN winner=0 THEN 1 END), COUNT(*), MAX(timestamp) "
+                            "FROM matches WHERE player_id_0=? OR player_id_1=? GROUP BY player_id_0, player_id_1", (idx, idx))
+        results: List[Tuple[int, int, int, int, str]] = self.cursor.fetchall()
 
-        ret: Dict[int, List[int]] = {}
+        ret: Dict[int, DB_handler.__Stats_for_AI_ret] = {}
         for result in results:
             if result[0] == result[1]: continue
 
             swap_side = result[1] == idx
             opponent_id = result[0] if swap_side else result[1]
 
-            stat_obj = [result[3] - result[2], result[3]] if swap_side else [result[2], result[3]]
+            stat_obj = (result[3] - result[2], result[3]) if swap_side else (result[2], result[3])
             if opponent_id not in ret:
-                ret[opponent_id] = [*stat_obj]
+                ret[opponent_id] = DB_handler.__Stats_for_AI_ret(self.get_AI_by_id(opponent_id), *stat_obj,
+                                                                 datetime.datetime.fromisoformat(result[4]))
             else:
-                ret[opponent_id][0] += stat_obj[0]
-                ret[opponent_id][1] += stat_obj[1]
+                ret[opponent_id].win_count += stat_obj[0]
+                ret[opponent_id].total_count += stat_obj[1]
 
-        return [(self.get_AI_by_id(opponent_id), stat_obj[0], stat_obj[1]) for opponent_id, stat_obj in ret.items()]
+        return [i for i in ret.values()]
 
     def get_stats_for_user(self, user_name: str) -> List[Tuple[AI, int, datetime.datetime]]:
         """获取给定用户名的所有AI的统计数据，返回一个列表，每个元素是元组(AI, AI总局数, 最后活跃时间)
@@ -133,10 +141,10 @@ class DB_handler:
             ai_id = result[0]
             ai = AI(user_name, *result[1:])
             self.cursor.execute("SELECT COUNT(*), MAX(timestamp) FROM matches WHERE player_id_0=? OR player_id_1=?", (ai_id, ai_id))
-            stats: Optional[Tuple[int, datetime.datetime]] = self.cursor.fetchone()
+            stats: Optional[Tuple[int, str]] = self.cursor.fetchone()
             assert stats is not None, f"Failed to get stats for AI {ai}"
 
             self.cursor.execute("SELECT COUNT(*) FROM matches WHERE player_id_0=? AND player_id_1=?", (ai_id, ai_id))
             dup_count: int = self.cursor.fetchone()[0]
-            ret.append((ai, stats[0] - dup_count, stats[1]))
+            ret.append((ai, stats[0] - dup_count, datetime.datetime.fromisoformat(stats[1])))
         return ret
