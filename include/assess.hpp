@@ -402,8 +402,13 @@ public:
     // 指定当前状态并进行分析
     Militia_analyzer(const GameState& state) noexcept;
 
-    // 针对一个目标（油井或中立副将）搜索可行的占领方案，其兵力来自民兵
-    std::optional<Militia_plan> search_plan_from_militia(const Generals* target) const noexcept;
+    /**
+     * @brief 针对一个目标搜索可行的占领方案或支援方案，其兵力来自民兵
+     * @param target 需要占领或支援的目标
+     * @param required_army 支援的最小兵数，仅在`target`为己方将领时有效
+     * @return std::optional<Militia_plan> 搜索出的方案，如果不存在则返回空
+     */
+    std::optional<Militia_plan> search_plan_from_militia(const Generals* target, int required_army = -1) const noexcept;
 
     // 针对一个目标（油井或中立副将）搜索可行的占领方案，其兵力从指定`provider`中获取
     std::optional<Militia_plan> search_plan_from_provider(const Generals* target, const Generals* provider) const noexcept;
@@ -528,6 +533,7 @@ std::optional<std::vector<Operation>> Attack_searcher::search(int extra_oil) con
 
     // 参数初始化
     int oil = state.coin[attacker_seat] + extra_oil;
+    bool enemy_extra_army = (attacker_seat != my_seat && attacker_seat == 0);
     int attacker_mobility = state.tech_level[attacker_seat][static_cast<int>(TechType::MOBILITY)];
     const MainGenerals* enemy_general = dynamic_cast<const MainGenerals*>(state.generals[1 - attacker_seat]);
     if (!state.can_soldier_step_on(enemy_general->position, attacker_seat)) return std::nullopt; // 排除敌方主将在沼泽而走不进的情况
@@ -611,7 +617,7 @@ std::optional<std::vector<Operation>> Attack_searcher::search(int extra_oil) con
 
                 army_left.clear();
                 attack_ops.clear();
-                army_left.push_back(state[path.front()].army);
+                army_left.push_back(state[path.front()].army + enemy_extra_army * general->produce_level);
 
                 // 模拟计算途径路径每一格时的军队数（落地点也需要算）
                 bool calc_pass = true;
@@ -875,8 +881,9 @@ Militia_analyzer::Militia_analyzer(const GameState& state) noexcept : state(stat
     }
 }
 
-std::optional<Militia_plan> Militia_analyzer::search_plan_from_militia(const Generals* target) const noexcept {
+std::optional<Militia_plan> Militia_analyzer::search_plan_from_militia(const Generals* target, int required_army) const noexcept {
     assert(target);
+    assert(target->player != my_seat || (target->player == my_seat && required_army > 0));
 
     // 将敌军数考虑到距离中
     static int extra_dist[Constant::col][Constant::row];
@@ -909,7 +916,8 @@ std::optional<Militia_plan> Militia_analyzer::search_plan_from_militia(const Gen
 
     // 开始寻找方案
     int enemy_army = state[target->position].army;
-    if (target->player != -1) enemy_army += 3; // 额外余量
+    if (target->player == 1-my_seat) enemy_army += 3; // 额外余量
+    if (required_army > 0) enemy_army = required_army;
 
     for (const Militia_dist_info& info : dist_info) {
         const Militia_area& area = *info.area;

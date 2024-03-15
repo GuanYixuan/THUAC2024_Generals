@@ -92,6 +92,8 @@ public:
     int oil_after_op;
     int remain_move_count;
 
+    bool army_disadvantage;
+
     std::optional<Deterrence_analyzer> deterrence_analyzer;
 
     // 站在敌方立场进行路径搜索时的额外开销，体现了我方的威慑范围
@@ -103,16 +105,14 @@ public:
             logger.log(LOG_LEVEL_INFO, "Seat %d\n", my_seat);
 
             add_operation(Operation::upgrade_generals(my_seat, QualityType::PRODUCTION));
-
+            return;
+        } else if (game_state.round == 2) {
             std::vector<Oil_cluster> clusters{identify_oil_clusters()};
             if (!clusters.empty()) {
                 cluster = clusters[0];
                 logger.log(LOG_LEVEL_INFO, "Selected oil cluster: %s", cluster->str().c_str());
             }
-            return;
         }
-        // 继续局面debug
-        if (game_state.round % 10 == 1) show_map(game_state, std::cerr);
 
         const MainGenerals* main_general = dynamic_cast<const MainGenerals*>(game_state.generals[my_seat]);
         const MainGenerals* enemy_general = dynamic_cast<const MainGenerals*>(game_state.generals[1 - my_seat]);
@@ -121,6 +121,9 @@ public:
         oil_after_op = game_state.coin[my_seat];
         remain_move_count = game_state.rest_move_step[my_seat];
         int oil_production = game_state.calc_oil_production(my_seat);
+        // 判断主将的兵是否处于劣势
+        army_disadvantage = game_state[main_general->position].army * 1.5 < game_state[enemy_general->position].army;
+        if (army_disadvantage) logger.log(LOG_LEVEL_INFO, "[Assess] Army disadvantage");
         deterrence_analyzer.emplace(main_general, enemy_general, oil_after_op, game_state);
 
         // 计算我方威慑范围
@@ -259,8 +262,10 @@ private:
         const MainGenerals* enemy_general = dynamic_cast<const MainGenerals*>(game_state.generals[1 - my_seat]);
         Dist_map my_dist(game_state, main_general->position, Path_find_config{1.0, game_state.has_swamp_tech(my_seat)});
         Dist_map enemy_dist(game_state, enemy_general->position, Path_find_config{1.0, game_state.has_swamp_tech(1-my_seat)});
-        int approach_time = (std::min(my_dist[enemy_general->position], enemy_dist[main_general->position]) - 5 - enemy_general->mobility_level) / (main_general->mobility_level + enemy_general->mobility_level);
-        int oil_on_approach = oil_after_op + game_state.calc_oil_production(my_seat) * std::max(0, approach_time);
+        int approach_time = (std::min(my_dist[enemy_general->position], enemy_dist[main_general->position]) - 5 - enemy_general->mobility_level) /
+                            (main_general->mobility_level + enemy_general->mobility_level) * 1.5;
+        approach_time = std::max(0, approach_time);
+        int oil_on_approach = oil_after_op + game_state.calc_oil_production(my_seat) * approach_time;
         if (approach_time > 100) oil_on_approach = oil_after_op; // 假如无法碰在一起，认为储油量就是当前量
         logger.log(LOG_LEVEL_INFO, "[Assess] Approach time: %d, oil on approach: %d, first = %d", approach_time, oil_on_approach, first_oil);
 
@@ -274,10 +279,13 @@ private:
 
             int tire = well->production_tire();
             int cost = well->production_upgrade_cost();
+            if (oil_after_op < cost) continue;
             if (tire >= 2 && !unlock_upgrade_3) continue;
-            if ((oil_after_op < oil_savings + cost ||
-                oil_on_approach + (Constant::OILWELL_PRODUCTION_VALUES[tire + 1] - Constant::OILWELL_PRODUCTION_VALUES[tire]) * approach_time < oil_savings + cost) &&
-                !first_oil) continue;
+
+            // 检查油量
+            bool enough_oil = oil_after_op >= oil_savings + cost;
+            enough_oil |= oil_on_approach + (Constant::OILWELL_PRODUCTION_VALUES[tire+1] - Constant::OILWELL_PRODUCTION_VALUES[tire]) * approach_time >= oil_savings + cost;
+            if (!enough_oil && !first_oil) continue;
 
             // 以油井为中心计算到敌方的距离（考虑我方威慑）
             Dist_map dist_map(game_state, well->position, enemy_dist_cfg);
@@ -350,10 +358,6 @@ private:
         bool oil_advantage = (game_state.coin[my_seat] >= 100) && (game_state.coin[my_seat] >= game_state.coin[1-my_seat] * 2) &&
                                 (my_prod >= enemy_prod * 2 || my_prod >= enemy_prod + 4);
         if (oil_advantage) logger.log(LOG_LEVEL_INFO, "[Assess] Oil advantage!");
-
-        // 判断主将的兵是否处于劣势
-        bool army_disadvantage = game_state[main_general->position].army * 1.5 < game_state[enemy_general->position].army;
-        logger.log(LOG_LEVEL_INFO, "[Assess] Army disadvantage");
 
         for (int i = 0, siz = game_state.generals.size(); i < siz; ++i) {
             const Generals* general = game_state.generals[i];
@@ -497,7 +501,10 @@ private:
             }
 
             // 否则取最近油田
-            if (best_well >= 0 && dist_map[game_state.generals[best_well]->position] < Dist_map::MAX_DIST) {
+            bool no_wandering = army_disadvantage &&
+                                (game_state.coin[my_seat] >= game_state.coin[1-my_seat] ||
+                                game_state.calc_oil_production(my_seat) >= game_state.calc_oil_production(1-my_seat));
+            if (best_well >= 0 && dist_map[game_state.generals[best_well]->position] < Dist_map::MAX_DIST && !no_wandering) {
                 strategies.emplace_back(General_strategy{i, General_strategy_type::OCCUPY, Strategy_target{game_state.generals[best_well]->position, most_danger}});
                 logger.log(LOG_LEVEL_INFO, "[Allocate:occupy] General %s -> well %s", general->position.str().c_str(), game_state.generals[best_well]->position.str().c_str());
                 continue;
