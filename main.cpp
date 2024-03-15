@@ -41,7 +41,6 @@ enum class General_strategy_type {
     DEFEND,
     ATTACK,
 };
-
 struct Danger {
     int eff_dist;
     const Generals* enemy;
@@ -54,7 +53,6 @@ struct Danger {
         return tactic.required_oil < other.tactic.required_oil;
     }
 };
-
 class Strategy_target {
 public:
     Coord coord;
@@ -70,7 +68,6 @@ public:
     // 构造函数：撤退
     Strategy_target(const Danger& danger) noexcept : coord(danger.enemy->position), general(danger.enemy), danger(danger) {}
 };
-
 class General_strategy {
 public:
     int general_id;
@@ -80,6 +77,25 @@ public:
     Strategy_target target;
 };
 
+enum class Militia_action_type {
+    OCCUPY_FREE,
+    OCCUPY_NEAR,
+    OCCUPY_MAINGENERAL,
+    SUPPORT
+};
+struct Militia_move_task {
+    Militia_action_type type;
+    Militia_plan plan;
+    int next_action;
+
+    int start_time;
+
+    Militia_move_task(Militia_action_type type, const Militia_plan& plan, int start_time) noexcept :
+        type(type), plan(plan), next_action(0), start_time(start_time) {}
+    std::pair<Coord, Direction>& operator[] (int index) noexcept { return plan.plan[index]; }
+
+    int step_count() const noexcept { return plan.plan.size(); }
+};
 
 class myAI : public GameController {
 public:
@@ -116,13 +132,22 @@ public:
 
         const MainGenerals* main_general = dynamic_cast<const MainGenerals*>(game_state.generals[my_seat]);
         const MainGenerals* enemy_general = dynamic_cast<const MainGenerals*>(game_state.generals[1 - my_seat]);
+        int my_army = game_state[main_general->position].army;
+        int enemy_army = game_state[enemy_general->position].army;
+        int enemy_additional_army = 0;
+        for (int dir = 0; dir < DIRECTION_COUNT; ++dir) {
+            Coord new_pos = main_general->position + DIRECTION_ARR[dir];
+            if (new_pos.in_map() && game_state[new_pos].player == 1 - my_seat)
+                enemy_additional_army = std::max(enemy_additional_army, game_state[new_pos].army);
+        }
+        enemy_army += enemy_additional_army;
 
         // 参数更新
         oil_after_op = game_state.coin[my_seat];
         remain_move_count = game_state.rest_move_step[my_seat];
         int oil_production = game_state.calc_oil_production(my_seat);
         // 判断主将的兵是否处于劣势
-        army_disadvantage = game_state[main_general->position].army * 1.5 < game_state[enemy_general->position].army;
+        army_disadvantage = my_army * 1.5 < enemy_army;
         if (army_disadvantage) logger.log(LOG_LEVEL_INFO, "[Assess] Army disadvantage");
         deterrence_analyzer.emplace(main_general, enemy_general, oil_after_op, game_state);
 
@@ -135,7 +160,7 @@ public:
         } else memset(enemy_pathfind_cost, 0, sizeof(enemy_pathfind_cost)); // 无威慑
 
         // 计算油量目标值
-        if (game_state.round > 15 || game_state[main_general->position].army < game_state[enemy_general->position].army)
+        if (game_state.round > 15 || my_army < enemy_army)
             oil_savings = 35;
         else oil_savings = 20;
         if (game_state.round > 20) {
@@ -156,6 +181,36 @@ public:
                 add_operation(op);
             }
             return;
+        }
+
+        // 检查当前的支援计划
+        if (militia_task && militia_task->type == Militia_action_type::SUPPORT && militia_task->plan.target_pos.dist_to(main_general->position) > 2) {
+            logger.log(LOG_LEVEL_INFO, "[Support] Militia support plan expired");
+            militia_task.reset();
+        }
+
+        // 考虑进行支援
+        if (!militia_task || militia_task->type == Militia_action_type::OCCUPY_FREE)
+        if (game_state.round >= 11 && (army_disadvantage || my_army < 20)) {
+            int target_army = 20;
+            target_army = std::max(target_army, std::min(enemy_army - 10, (int)(enemy_army / 1.5) + 5));
+            logger.log(LOG_LEVEL_INFO, "[Support] Consider support, target army %d", target_army);
+
+            Militia_analyzer m_analyzer(game_state);
+            for (int max_step = 12, starting = true; max_step > 0; max_step-=2) {
+                std::optional<Militia_plan> plan = m_analyzer.search_plan_from_militia(main_general, max_step);
+                if (plan && starting) militia_task.emplace(Militia_action_type::SUPPORT, *plan, game_state.round);
+                starting = false;
+
+                if (plan && plan->army_used < target_army - my_army) break;
+                else militia_task.emplace(Militia_action_type::SUPPORT, *plan, game_state.round);
+            }
+            if (militia_task) {
+                logger.log(LOG_LEVEL_INFO, "[Support] Militia support plan size %d, army %d",
+                           militia_task->step_count(), militia_task->plan.army_used);
+                for (const auto& op : militia_task->plan.plan)
+                    logger.log(LOG_LEVEL_INFO, "\t%s->%s", op.first.str().c_str(), (op.first + DIRECTION_ARR[op.second]).str().c_str());
+            }
         }
 
         // 考虑可能的升级
@@ -361,19 +416,21 @@ private:
 
         for (int i = 0, siz = game_state.generals.size(); i < siz; ++i) {
             const Generals* general = game_state.generals[i];
-            // 暂时只给主将分配策略
-            if (general->player != my_seat || dynamic_cast<const MainGenerals*>(general) == nullptr) continue;
+            if (general->player != my_seat || dynamic_cast<const OilWell*>(general)) continue;
+
+            // 感觉不对就炸
+            if (army_disadvantage && oil_after_op >= std::max(oil_savings - 15, GENERAL_SKILL_COST[SkillType::STRIKE]) &&
+                enemy_general->position.in_attack_range(general->position) && !general->cd(SkillType::STRIKE))
+                    add_operation(Operation::generals_skill(general->id, SkillType::STRIKE, enemy_general->position));
+
+            // 暂时只给主将分配移动策略
+            if (dynamic_cast<const MainGenerals*>(general) == nullptr) continue;
 
             int curr_army = game_state[general->position].army;
             double defence_mult = game_state.defence_multiplier(general->position);
             if (curr_army <= 1) continue;
             logger.log(LOG_LEVEL_INFO, "[Assess] General %s with army %d, defence mult %.2f, enemy lookahead oil %d",
                        general->position.str().c_str(), curr_army, defence_mult, enemy_lookahead_oil);
-
-            // 感觉不对就炸
-            if (army_disadvantage && oil_after_op >= std::max(oil_savings - 15, GENERAL_SKILL_COST[SkillType::STRIKE]) &&
-                enemy_general->position.in_attack_range(general->position) && !general->cd(SkillType::STRIKE))
-                    add_operation(Operation::generals_skill(general->id, SkillType::STRIKE, enemy_general->position));
 
             // 考虑是否在危险范围内
             Danger most_danger{100000, nullptr, Critical_tactic(false, BASE_TACTICS[0])};
@@ -433,7 +490,8 @@ private:
                 if (best_well == -1 || near_map[oil_well->position] < near_map[game_state.generals[best_well]->position]) best_well = j;
             }
             const OilWell* best_well_obj = best_well >= 0 ? dynamic_cast<const OilWell*>(game_state.generals[best_well]) : nullptr;
-            if (best_well_obj && near_map[best_well_obj->position] <= 4.0 && (!militia_plan || militia_plan->target->position != best_well_obj->position)) {
+            if (best_well_obj && near_map[best_well_obj->position] <= 4.0 &&
+                (!militia_task || militia_task->plan.target->position != best_well_obj->position)) {
                 // 如果民兵能占领就找民兵了
                 Militia_analyzer analyzer(game_state);
                 std::optional<Militia_plan> plan = analyzer.search_plan_from_provider(best_well_obj, general);
@@ -448,8 +506,7 @@ private:
                     Attack_searcher searcher(1-my_seat, temp_state);
                     if (!searcher.search(enemy_lookahead_oil - game_state.coin[1 - my_seat])) {
                         logger.log(LOG_LEVEL_INFO, "\t[Militia] Directly calling for militia to occupy %s, plan size %d", best_well_obj->position.str().c_str(), plan->plan.size());
-                        militia_plan.emplace(*plan);
-                        next_action_index = 0;
+                        militia_task.emplace(Militia_action_type::OCCUPY_NEAR, *plan, game_state.round);
                         continue; // 将领等待1回合
                     } else logger.log(LOG_LEVEL_INFO, "\t[Militia] Cannot directly occupy %s due to enemy threat", best_well_obj->position.str().c_str());
                 }
@@ -563,7 +620,7 @@ private:
                 }
 
                 // 如果民兵正在占，则不再行动
-                if (militia_plan && militia_plan->target->position == target) {
+                if (militia_task && militia_task->plan.target->position == target) {
                     logger.log(LOG_LEVEL_INFO, "\t[Occupy] Waiting for militia action");
                     continue;
                 }
@@ -611,15 +668,14 @@ private:
                     }
                 }
                 // 反之尝试分兵占领
-                else if (!militia_plan || militia_plan->target->position != target) {
+                else if (!militia_task || militia_task->plan.target->position != target) {
                     Militia_analyzer analyzer(game_state);
                     auto plan = analyzer.search_plan_from_provider(game_state[target].generals, game_state.generals[my_seat]);
                     // 首先兵要足够，其次不能太远
                     if (plan && plan->army_used <= curr_army - 1 && plan->plan.size() <= 8 &&
                         (curr_army - plan->army_used >= deterrence_analyzer->min_army * 1.2 || (plan->plan.size() <= 3 && plan->army_used <= 0.4 * curr_army))) {
                         logger.log(LOG_LEVEL_INFO, "\t[Occupy] Calling for militia to occupy %s, plan size %d", target.str().c_str(), plan->plan.size());
-                        militia_plan.emplace(*plan);
-                        next_action_index = 0;
+                        militia_task.emplace(Militia_action_type::OCCUPY_MAINGENERAL, *plan, game_state.round);
                         continue;
                     }
                 }
@@ -765,13 +821,13 @@ private:
         }
     }
 
-    int next_action_index = 0;
-    std::optional<Militia_plan> militia_plan;
+    std::optional<Militia_move_task> militia_task;
     void militia_move() {
-        if (militia_plan && next_action_index >= (int)militia_plan->plan.size()) militia_plan.reset();
+        // 任务完成
+        if (militia_task && militia_task->next_action >= militia_task->step_count()) militia_task.reset();
 
-        // 10回合分析一次，不允许打断主将分配的任务
-        if ((game_state.round % 10 == 1 || !militia_plan) && (militia_plan ? militia_plan->area != nullptr : true)) {
+        // 10回合分析一次，不允许打断非“自由占领”型的任务
+        if ((game_state.round % 10 == 1 || !militia_task) && (militia_task ? militia_task->type == Militia_action_type::OCCUPY_FREE : true)) {
             Militia_analyzer analyzer(game_state);
 
             // 寻找总时长尽量小的方案，且要求集合用时不超过7步
@@ -795,18 +851,19 @@ private:
                 if (better) best_plan.emplace(plan.value());
             }
 
-            if (best_plan && best_plan->plan.size() <= 16) {
-                militia_plan.emplace(best_plan.value());
-                next_action_index = 0;
+            if (best_plan && (int)best_plan->plan.size() <= 8 * game_state.get_mobility(my_seat)) {
+                militia_task.emplace(Militia_action_type::OCCUPY_FREE, *best_plan, game_state.round);
 
-                logger.log(LOG_LEVEL_INFO, "[Militia] Militia plan size %d, gather %d, found for target %s:", militia_plan->plan.size(), militia_plan->gather_steps, militia_plan->target->position.str().c_str());
-                for (const auto& op : militia_plan->plan) logger.log(LOG_LEVEL_INFO, "\t%s->%s", op.first.str().c_str(), (op.first + DIRECTION_ARR[op.second]).str().c_str());
+                logger.log(LOG_LEVEL_INFO, "[Militia] Militia plan size %d, gather %d, found for target %s:",
+                           militia_task->step_count(), militia_task->plan.gather_steps, militia_task->plan.target->position.str().c_str());
+                for (const auto& op : militia_task->plan.plan)
+                    logger.log(LOG_LEVEL_INFO, "\t%s->%s", op.first.str().c_str(), (op.first + DIRECTION_ARR[op.second]).str().c_str());
             }
         }
 
         if (!remain_move_count) return;
         // 无任务则扩展
-        if (!militia_plan) {
+        if (!militia_task) {
             // 按照到敌方的距离升序
             Dist_map enemy_dist(game_state, game_state.generals[1-my_seat]->position, Path_find_config{1.0, game_state.has_swamp_tech(my_seat)});
             static std::vector<std::pair<int, Operation>> potential_ops;
@@ -861,33 +918,36 @@ private:
             }
         }
         // 否则执行计划
-        else while (remain_move_count && next_action_index < (int)militia_plan->plan.size()) {
+        else while (remain_move_count && militia_task->next_action < militia_task->step_count()) {
             // 一些初步检查
-            const Coord& pos = militia_plan->plan[next_action_index].first;
+            int next_action_index = militia_task->next_action;
+            Direction move_dir = (*militia_task)[next_action_index].second;
+            const Coord& pos = (*militia_task)[next_action_index].first;
             const Cell& cell = game_state[pos];
 
             // 是否是从主将上提取兵力的第一步操作
             bool take_army_from_general = (cell.generals && cell.generals->id == my_seat && next_action_index == 0);
             if (take_army_from_general)
-                logger.log(LOG_LEVEL_INFO, "[Militia] Plan step %d, take %d army from general", next_action_index+1, militia_plan->army_used);
+                logger.log(LOG_LEVEL_INFO, "[Militia] Plan step %d, take %d army from general", next_action_index+1, militia_task->plan.army_used);
 
             // 暂时把副将当作工厂
             if ((cell.player != my_seat || cell.army <= 1 || (cell.generals && cell.generals->id == my_seat)) && !take_army_from_general) {
-                logger.log(LOG_LEVEL_INFO, "[Militia] Plan step %d, invalid position (player %d, army %d)", next_action_index+1, cell.player, cell.army);
-                militia_plan.reset();
+                logger.log(LOG_LEVEL_INFO, "[Militia] Plan step %d, invalid position %s (player %d, army %d)",
+                           next_action_index+1, pos.str().c_str(), cell.player, cell.army);
+                militia_task.reset();
                 break;
             }
-            if (take_army_from_general && cell.army - 1 < militia_plan->army_used) {
-                logger.log(LOG_LEVEL_INFO, "[Militia] Plan step %d, army not enough to take %d from general", next_action_index+1, militia_plan->army_used);
-                militia_plan.reset();
+            if (take_army_from_general && cell.army - 1 < militia_task->plan.army_used) {
+                logger.log(LOG_LEVEL_INFO, "[Militia] Plan step %d, army not enough to take %d from general", next_action_index+1, militia_task->plan.army_used);
+                militia_task.reset();
                 break;
             }
 
             logger.log(LOG_LEVEL_INFO, "[Militia] Executing plan step %d, %s->%s",
-                        next_action_index+1, pos.str().c_str(), (pos + DIRECTION_ARR[militia_plan->plan[next_action_index].second]).str().c_str());
-            add_operation(Operation::move_army(pos, militia_plan->plan[next_action_index].second, take_army_from_general ? militia_plan->army_used : cell.army - 1));
+                        next_action_index+1, pos.str().c_str(), (pos + DIRECTION_ARR[move_dir]).str().c_str());
+            add_operation(Operation::move_army(pos, move_dir, take_army_from_general ? militia_task->plan.army_used : cell.army - 1));
             remain_move_count -= 1;
-            next_action_index += 1;
+            militia_task->next_action += 1;
         }
     }
 };
