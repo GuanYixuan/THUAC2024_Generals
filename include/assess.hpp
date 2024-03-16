@@ -197,11 +197,12 @@ public:
         int target_army = state[target->position].army;
         double def_mult = state.defence_multiplier(target->position);
         for (const Base_tactic& base : BASE_TACTICS) {
+            int rael_target_army = std::max(0, target_army - STRIKE_DAMAGE * base.strike_count);
             double atk_mult = pow(GENERAL_SKILL_EFFECT[SkillType::COMMAND], base.command_count) / def_mult;
             atk_mult *= pow(GENERAL_SKILL_EFFECT[SkillType::WEAKEN], -base.weaken_count);
 
             // 能够俘获
-            if (attacker_army * atk_mult > target_army) {
+            if (attacker_army * atk_mult > rael_target_army) {
                 min_oil = std::min(min_oil, base.required_oil + GENERAL_SKILL_COST[SkillType::RUSH]);
                 // 检查油量并更新策略
                 if (!non_rush_tactic && attacker_oil >= base.required_oil) non_rush_tactic.emplace(false, base);
@@ -209,8 +210,8 @@ public:
             }
             // 能够负担得起
             if (attacker_oil >= base.required_oil + GENERAL_SKILL_COST[SkillType::RUSH]) {
-                min_army = std::min(min_army, (int)std::ceil(target_army / atk_mult));
-                target_max_army = std::max(target_max_army, (int)(attacker_army * atk_mult));
+                min_army = std::min(min_army, (int)std::ceil(rael_target_army / atk_mult));
+                target_max_army = std::max(target_max_army, (int)(attacker_army * atk_mult) + STRIKE_DAMAGE * base.strike_count);
             }
         }
     }
@@ -389,11 +390,9 @@ public:
     // 军队汇集至集合点需要的步数
     int gather_steps;
 
-    // 构造函数：通过`calc_gather_plan`计算出的`plan`构造
-    Militia_plan(const Generals* target, const Militia_area* area, std::vector<std::pair<Coord, Direction>>&& plan, int army_used) noexcept :
-        target(target), target_pos(target->position), area(area), plan(std::move(plan)), army_used(army_used), gather_steps(this->plan.size()) {}
-    Militia_plan(const Militia_plan&) noexcept = default;
-
+    // 构造函数：通过`calc_gather_plan`计算出结果构造
+    Militia_plan(const Generals* target, const Militia_area* area, const std::vector<std::pair<Coord, Direction>>& plan, int army_used) noexcept :
+        target(target), target_pos(target->position), area(area), plan(plan), army_used(army_used), gather_steps(this->plan.size()) {}
 };
 
 // 民兵分析器
@@ -936,8 +935,8 @@ std::optional<Militia_plan> Militia_analyzer::search_plan_from_militia(const Gen
         if (area.max_army < army_required) continue; // 兵力不足
 
         // 计算方案：兵力汇集到最近点处
-        auto&& [army_count, gather_plan] = calc_gather_plan(info, army_required, support_mode ? max_support_steps : -1);
-        Militia_plan plan(target, info.area, std::move(gather_plan), army_count);
+        const auto& gather_plan = calc_gather_plan(info, army_required, support_mode ? max_support_steps : -1);
+        Militia_plan plan(target, info.area, gather_plan.second, gather_plan.first);
 
         // 再从集合点处走到目标点
         std::vector<Coord> path = target_dist.path_to_origin(info.clostest_point);
@@ -1030,7 +1029,7 @@ std::pair<int, std::vector<std::pair<Coord, Direction>>> Militia_analyzer::calc_
             queue.emplace(next_pos, state[next_pos].army - 1, static_cast<Direction>(dir));
         }
     }
-    assert(!step_mode || total_army >= required_army);
+    assert(step_mode || total_army >= required_army);
 
     std::reverse(plan.begin(), plan.end());
     return std::make_pair(total_army, plan);

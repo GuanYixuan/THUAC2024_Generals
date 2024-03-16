@@ -147,7 +147,8 @@ public:
         remain_move_count = game_state.rest_move_step[my_seat];
         int oil_production = game_state.calc_oil_production(my_seat);
         // 判断主将的兵是否处于劣势
-        army_disadvantage = my_army * 1.5 < enemy_army;
+        army_disadvantage = my_army * 1.5 < enemy_army ||
+                            (my_army + 15 * enemy_general->produce_level) * 1.5 < enemy_army + 15 * main_general->produce_level;
         if (army_disadvantage) logger.log(LOG_LEVEL_INFO, "[Assess] Army disadvantage");
         deterrence_analyzer.emplace(main_general, enemy_general, oil_after_op, game_state);
 
@@ -199,18 +200,19 @@ public:
             Militia_analyzer m_analyzer(game_state);
             for (int max_step = 12, starting = true; max_step > 0; max_step-=2) {
                 std::optional<Militia_plan> plan = m_analyzer.search_plan_from_militia(main_general, max_step);
-                if (plan && starting) militia_task.emplace(Militia_action_type::SUPPORT, *plan, game_state.round);
+                if (!plan) continue;
+                if (starting) militia_task.emplace(Militia_action_type::SUPPORT, *plan, game_state.round);
                 starting = false;
 
-                if (plan && plan->army_used < target_army - my_army) break;
+                if (plan->army_used < target_army - my_army) break;
                 else militia_task.emplace(Militia_action_type::SUPPORT, *plan, game_state.round);
             }
-            if (militia_task) {
+            if (militia_task && militia_task->type == Militia_action_type::SUPPORT) {
                 logger.log(LOG_LEVEL_INFO, "[Support] Militia support plan size %d, army %d",
                            militia_task->step_count(), militia_task->plan.army_used);
                 for (const auto& op : militia_task->plan.plan)
                     logger.log(LOG_LEVEL_INFO, "\t%s->%s", op.first.str().c_str(), (op.first + DIRECTION_ARR[op.second]).str().c_str());
-            }
+            } else logger.log(LOG_LEVEL_INFO, "[Support] No support plan found");
         }
 
         // 考虑可能的升级
@@ -491,7 +493,7 @@ private:
             }
             const OilWell* best_well_obj = best_well >= 0 ? dynamic_cast<const OilWell*>(game_state.generals[best_well]) : nullptr;
             if (best_well_obj && near_map[best_well_obj->position] <= 4.0 &&
-                (!militia_task || militia_task->plan.target->position != best_well_obj->position)) {
+                (!militia_task || (militia_task->type != Militia_action_type::SUPPORT && militia_task->plan.target->position != best_well_obj->position))) {
                 // 如果民兵能占领就找民兵了
                 Militia_analyzer analyzer(game_state);
                 std::optional<Militia_plan> plan = analyzer.search_plan_from_provider(best_well_obj, general);
@@ -930,13 +932,25 @@ private:
             if (take_army_from_general)
                 logger.log(LOG_LEVEL_INFO, "[Militia] Plan step %d, take %d army from general", next_action_index+1, militia_task->plan.army_used);
 
-            // 暂时把副将当作工厂
-            if ((cell.player != my_seat || cell.army <= 1 || (cell.generals && cell.generals->id == my_seat)) && !take_army_from_general) {
+            // 需要移动的格子不属于自己，或未经授权从主将取兵
+            if (cell.player != my_seat || (cell.generals && cell.generals->id == my_seat && !take_army_from_general)) {
                 logger.log(LOG_LEVEL_INFO, "[Militia] Plan step %d, invalid position %s (player %d, army %d)",
                            next_action_index+1, pos.str().c_str(), cell.player, cell.army);
                 militia_task.reset();
                 break;
             }
+            // 需要移动的格子没有兵
+            if (cell.army <= 1) {
+                if (militia_task->type == Militia_action_type::SUPPORT) {
+                    militia_task->next_action += 1;
+                    continue;
+                }
+                logger.log(LOG_LEVEL_INFO, "[Militia] Plan step %d, invalid position %s (player %d, army %d)",
+                           next_action_index+1, pos.str().c_str(), cell.player, cell.army);
+                militia_task.reset();
+                break;
+            }
+            // 需要从主将上提取兵力，但兵力不足
             if (take_army_from_general && cell.army - 1 < militia_task->plan.army_used) {
                 logger.log(LOG_LEVEL_INFO, "[Militia] Plan step %d, army not enough to take %d from general", next_action_index+1, militia_task->plan.army_used);
                 militia_task.reset();
