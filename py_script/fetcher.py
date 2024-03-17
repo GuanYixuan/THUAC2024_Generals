@@ -99,7 +99,7 @@ class Fetcher:
                     continue
 
                 match_players = tuple(map(lambda x: x["user"]["username"], match["info"]))
-                match_ais = tuple(map(lambda x: AI(x["user"]["username"], x["code"]["entity"], x["code"]["version"], x["code"]["id"], x["code"]["remark"]), match["info"]))
+                match_ais = tuple(map(lambda x: AI(x["user"]["username"], x["code"]["entity"], x["code"]["version"], x["code"]["id"].replace("-", ""), x["code"]["remark"]), match["info"]))
 
                 if isinstance(player, str): # player在match_players中
                     if not (player in match_players): continue

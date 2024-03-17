@@ -54,8 +54,19 @@ class DB_handler:
 
     def get_AI_id(self, ai: AI, add_if_not_exist: bool = False) -> int:
         """获取给定`AI`的id，当`add_if_not_exist`为`True`时，若不存在则创建"""
-        self.cursor.execute("SELECT id FROM AIs WHERE user_name=? AND ai_name=? AND version=?", (ai.user_name, ai.ai_name, ai.version))
-        result: Optional[Tuple[int]] = self.cursor.fetchone()
+        result: Optional[Tuple[int]] = None
+        if not len(ai.token):
+            self.cursor.execute("SELECT id FROM AIs WHERE user_name=? AND ai_name=? AND version=?",
+                                (ai.user_name, ai.ai_name, ai.version))
+            all_results: List[Tuple[int]] = self.cursor.fetchall()
+            result = all_results[0] if len(all_results) == 1 else None
+            if len(all_results) > 1:
+                raise ValueError(f"Multiple ids found with the same name and version: {[i[0] for i in all_results]}")
+        else:
+            self.cursor.execute("SELECT id FROM AIs WHERE user_name=? AND ai_name=? AND version=? AND token=?",
+                                (ai.user_name, ai.ai_name, ai.version, ai.token.replace('-', '')))
+            result = self.cursor.fetchone()
+
         if result is not None:
             return result[0]
 
