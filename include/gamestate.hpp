@@ -196,6 +196,9 @@ public:
     // 技能冷却剩余回合数
     int cd(SkillType type) const noexcept { return skills_cd[static_cast<int>(type)]; }
 
+    // 技能是否在生效中
+    bool skill_active(SkillType type) const noexcept { return skill_duration[static_cast<int>(type)] > 0; }
+
     // 获取各项等级
     virtual int production_tire() const noexcept = 0;
     virtual int defence_tire() const noexcept = 0;

@@ -230,25 +230,42 @@ private:
     const int attacker_seat;
     const GameState& state;
 
+
+    // 技能释放的类型
+    class Discharge_type {
+    public:
+        enum __Inner_type {
+            UNABLE, // 无法释放技能（位置不合适或正在冷却）
+            NORMAL, // 可正常释放技能（冷却完成）
+            ALREADY_ACTIVE, // 技能已经释放（针对统率和弱化）
+        } __val;
+
+        constexpr Discharge_type(__Inner_type val) noexcept : __val(val) {}
+
+        constexpr operator __Inner_type() const noexcept { return __val; }
+        constexpr operator bool() const noexcept { return __val != UNABLE; }
+        constexpr explicit operator int() const noexcept { return (int)__val; }
+    };
+
     // 技能释放表中的元素
     struct Skill_discharger {
         // 释放技能的位置
         Coord pos;
         // 可借用的将领
         const Generals* general_ptr;
-        // 该位置是否能够进行统率（若有将领则要求冷却已完成）
-        bool can_command;
-        // 该位置是否能够进行弱化或空袭（若有将领则要求冷却已完成）
-        bool can_cover_enemy;
+        // 该位置是否能够进行统率
+        Discharge_type can_command;
+        // 该位置是否能够进行弱化或空袭
+        Discharge_type can_cover_enemy;
 
-        Skill_discharger(const Coord& pos, const Generals* general_ptr, bool can_command, bool can_cover_enemy) noexcept :
+        Skill_discharger(const Coord& pos, const Generals* general_ptr, Discharge_type can_command, Discharge_type can_cover_enemy) noexcept :
             pos(pos), general_ptr(general_ptr), can_command(can_command), can_cover_enemy(can_cover_enemy) {}
 
         constexpr bool general_available() const noexcept { return (bool)general_ptr; }
 
         // 获取该位置的优先级，用于排序
         constexpr int score() const noexcept {
-            return (int)can_cover_enemy + (int)can_command * 2 + (int)((bool)general_ptr) * 4;
+            return (int)can_cover_enemy + (int)can_command * 4 + general_available() * 16;
         }
         bool operator> (const Skill_discharger& other) const noexcept { return score() > other.score(); }
     };
@@ -548,12 +565,22 @@ std::optional<std::vector<Operation>> Attack_searcher::search(int extra_oil) con
 
     Dist_map enemy_dist(state, enemy_general->position, Path_find_config(1.0, state.has_swamp_tech(attacker_seat), false));
 
+    // 计算“已经释放的技能”的价值
+    int current_skill_value = 0;
+    for (int i = 0, siz = state.generals.size(); i < siz; ++i) {
+        const Generals* general = state.generals[i];
+        if (general->player != attacker_seat || dynamic_cast<const OilWell*>(general) != nullptr) continue;
+
+        if (general->skill_active(SkillType::COMMAND)) current_skill_value += GENERAL_SKILL_COST[SkillType::COMMAND];
+        if (general->skill_active(SkillType::WEAKEN)) current_skill_value += GENERAL_SKILL_COST[SkillType::WEAKEN];
+    }
+
     // 初筛技能范围
     static std::vector<Base_tactic> avail_base_tactics{};
     avail_base_tactics.clear();
     for (const Base_tactic& base_tactic : BASE_TACTICS) {
         // 基本油量检查（不考虑rush和将领召唤开销）
-        if (oil < base_tactic.skill_cost()) continue;
+        if (oil + current_skill_value < base_tactic.skill_cost()) continue;
         avail_base_tactics.push_back(base_tactic);
     }
 
@@ -599,7 +626,7 @@ std::optional<std::vector<Operation>> Attack_searcher::search(int extra_oil) con
             // 根据精细距离决定是否需要rush
             Critical_tactic tactic(enemy_dist[gather_point] > remain_move, base_tactic);
             int skill_cost = tactic.skill_cost();
-            if (oil < skill_cost) continue; // 根据rush信息再次检查油量
+            if (oil + current_skill_value < skill_cost) continue; // 根据rush信息再次检查油量
             if (tactic.can_rush && gather_point_army <= 1) continue; // gather_point我方军队数量不足，无法rush
 
             // 距离检查
@@ -692,8 +719,8 @@ std::optional<std::vector<Operation>> Attack_searcher::search(int extra_oil) con
                 int y_max = std::min(atk_pos.y + (GENERAL_ATTACK_RADIUS + 1), Constant::row - 1);
                 for (int x = x_min; x <= x_max; ++x) for (int y = y_min; y <= y_max; ++y) {
                     Coord pos{x, y};
-                    bool can_command = pos.in_attack_range(atk_pos);
-                    bool can_cover_enemy = pos.in_attack_range(enemy_general->position);
+                    Discharge_type can_command = pos.in_attack_range(atk_pos) ? Discharge_type::NORMAL : Discharge_type::UNABLE;
+                    Discharge_type can_cover_enemy = pos.in_attack_range(enemy_general->position) ? Discharge_type::NORMAL : Discharge_type::UNABLE;
                     if (!can_command && !can_cover_enemy) continue; // 啥都不能干的格子
 
                     // 确认格子上的将领
@@ -707,8 +734,15 @@ std::optional<std::vector<Operation>> Attack_searcher::search(int extra_oil) con
                         // 阵营检查
                         if (cell_general->player != attacker_seat) continue;
                         // 冷却检查
-                        if (can_command && cell_general->cd(SkillType::COMMAND)) continue;
-                        if (can_cover_enemy && (cell_general->cd(SkillType::WEAKEN) || cell_general->cd(SkillType::STRIKE))) continue;
+                        if (can_command) {
+                            if (cell_general->skill_active(SkillType::COMMAND)) can_command = Discharge_type::ALREADY_ACTIVE;
+                            else if (cell_general->cd(SkillType::COMMAND)) continue;
+                        }
+                        if (can_cover_enemy) {
+                            if (cell_general->cd(SkillType::STRIKE)) continue; // 【此处也排除了“能够弱化但不能空袭”的情形】
+                            if (cell_general->skill_active(SkillType::WEAKEN)) can_cover_enemy = Discharge_type::ALREADY_ACTIVE;
+                            else if (cell_general->cd(SkillType::WEAKEN)) continue;
+                        }
                         skill_table.emplace_back(pos, cell_general, can_command, can_cover_enemy);
                     }
                     // 无将领
@@ -727,12 +761,13 @@ std::optional<std::vector<Operation>> Attack_searcher::search(int extra_oil) con
                     logger.log(LOG_LEVEL_DEBUG, "\t\tDischargers:");
                     for (const Skill_discharger& discharger : skill_table) {
                         logger.log(LOG_LEVEL_DEBUG, "\t\t\t%s, general_available = %d, can_command = %d, can_cover_enemy = %d",
-                                   discharger.pos.str().c_str(), discharger.general_available(), discharger.can_command, discharger.can_cover_enemy);
+                                   discharger.pos.str().c_str(), discharger.general_available(), (int)discharger.can_command, (int)discharger.can_cover_enemy);
                     }
                 }
 
                 // 暂时先不考虑路径上的格子（以及落点处不能召唤副将）
                 int spawn_count = 0;
+                int skill_discount = 0; // 已经释放的技能的额外折扣
                 int next_general_id = state.next_generals_id;
                 Base_tactic remain_skills = base_tactic;
                 for (const Skill_discharger& discharger : skill_table) {
@@ -744,13 +779,15 @@ std::optional<std::vector<Operation>> Attack_searcher::search(int extra_oil) con
                         skill_count++;
                         remain_skills.command_count--;
                         // 插入到倒数第二个位置
-                        attack_ops.insert(attack_ops.begin() + (attack_ops.size() - 1), Operation::generals_skill(general_id, SkillType::COMMAND));
+                        if (discharger.can_command == Discharge_type::ALREADY_ACTIVE) skill_discount += GENERAL_SKILL_COST[SkillType::COMMAND];
+                        else attack_ops.insert(attack_ops.begin() + (attack_ops.size() - 1), Operation::generals_skill(general_id, SkillType::COMMAND));
                     }
                     if (discharger.can_cover_enemy) {
                         if (remain_skills.weaken_count) {
                             skill_count++;
                             remain_skills.weaken_count--;
-                            attack_ops.insert(attack_ops.begin() + (attack_ops.size() - 1), Operation::generals_skill(general_id, SkillType::WEAKEN));
+                            if (discharger.can_cover_enemy == Discharge_type::ALREADY_ACTIVE) skill_discount += GENERAL_SKILL_COST[SkillType::WEAKEN];
+                            else attack_ops.insert(attack_ops.begin() + (attack_ops.size() - 1), Operation::generals_skill(general_id, SkillType::WEAKEN));
                         }
                         if (remain_skills.strike_count) {
                             skill_count++;
@@ -767,11 +804,12 @@ std::optional<std::vector<Operation>> Attack_searcher::search(int extra_oil) con
                     if (remain_skills.skill_discharged()) break; // 所有技能都已释放完毕
                 }
                 // 检查技能是否全部释放完毕以及费用是否足够
-                if (!remain_skills.skill_discharged() || skill_cost + spawn_count * SPAWN_GENERAL_COST > oil) continue;
+                if (!remain_skills.skill_discharged() || skill_cost + spawn_count * SPAWN_GENERAL_COST > oil + skill_discount) continue;
 
                 // 可攻击，导出行动
                 if (attacker_seat == my_seat)
-                    logger.log(LOG_LEVEL_INFO, "\t\t\tComfirmed:[%s] Army left %d, path size %d", tactic.str().c_str(), army_left.back(), path.size()-1);
+                    logger.log(LOG_LEVEL_INFO, "\t\t\tComfirmed:[%s] Army left %d, path size %d, discount %d",
+                               tactic.str().c_str(), army_left.back(), path.size()-1, skill_discount);
                 return attack_ops;
             }
         }
