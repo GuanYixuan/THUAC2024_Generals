@@ -109,6 +109,7 @@ public:
     int remain_move_count;
 
     bool army_disadvantage;
+    bool oil_prod_advantage;
 
     std::optional<Deterrence_analyzer> deterrence_analyzer;
 
@@ -150,7 +151,10 @@ public:
         army_disadvantage = my_army * 1.5 < enemy_army ||
                             (my_army + 15 * enemy_general->produce_level) * 1.5 < enemy_army + 15 * main_general->produce_level;
         if (army_disadvantage) logger.log(LOG_LEVEL_INFO, "[Assess] Army disadvantage");
-        deterrence_analyzer.emplace(main_general, enemy_general, oil_after_op, game_state);
+        deterrence_analyzer.emplace(main_general, enemy_general, oil_after_op, game_state, enemy_additional_army);
+        // 判断产量是否有优势
+        oil_prod_advantage = oil_production >= game_state.calc_oil_production(1 - my_seat) + 4;
+        if (oil_prod_advantage) logger.log(LOG_LEVEL_INFO, "[Assess] Oil production advantage");
 
         // 计算我方威慑范围
         if (deterrence_analyzer->rush_tactic || deterrence_analyzer->non_rush_tactic) { // 有威慑
@@ -333,6 +337,9 @@ private:
         for (int i = 0, siz = game_state.generals.size(); i < siz; ++i) {
             const OilWell* well = dynamic_cast<const OilWell*>(game_state.generals[i]);
             if (well == nullptr || well->player != my_seat) continue;
+
+            // 主将未升到产量为4时且石油有优势时，不再升级油井
+            if (main_general->produce_level < Constant::GENERAL_PRODUCTION_VALUES[2] && oil_prod_advantage) break;
 
             int tire = well->production_tire();
             int cost = well->production_upgrade_cost();

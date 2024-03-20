@@ -186,7 +186,7 @@ public:
     int target_max_army;
 
     // 构造并进行分析，对`attacker`与`target`同阵营的情况结果可能不正确
-    Deterrence_analyzer(const Generals* attacker, const Generals* target, int attacker_oil, const GameState& state) noexcept :
+    Deterrence_analyzer(const Generals* attacker, const Generals* target, int attacker_oil, const GameState& state, int target_additional_army = 0) noexcept :
         attacker(attacker), target(target), attacker_oil(attacker_oil) {
 
         min_oil = std::numeric_limits<int>::max();
@@ -194,7 +194,7 @@ public:
         target_max_army = 0;
 
         int attacker_army = state[attacker->position].army;
-        int target_army = state[target->position].army;
+        int target_army = state[target->position].army + target_additional_army;
         double def_mult = state.defence_multiplier(target->position);
         for (const Base_tactic& base : BASE_TACTICS) {
             int rael_target_army = std::max(0, target_army - STRIKE_DAMAGE * base.strike_count);
