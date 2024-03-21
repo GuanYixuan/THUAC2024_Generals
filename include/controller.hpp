@@ -39,6 +39,7 @@ class GameController
 {
 public:
     GameState game_state;                     // 游戏状态，一个 GameState 类的对象。
+    std::vector<Operation> last_enemy_ops;    // 记录上一次收到的敌方操作列表。
 
 
     void init();
@@ -47,9 +48,9 @@ public:
      * @brief 为敌方应用动作序列`ops`
      * @note 此方法断言所有敌方操作合法
      */
-    void apply_enemy_ops(const std::vector<Operation> &ops) {
+    void apply_enemy_ops() {
         logger.log(LOG_LEVEL_INFO, "Applying enemy ops:");
-        for (const auto &op : ops) {
+        for (const auto &op : last_enemy_ops) {
             bool valid = execute_single_command(1 - my_seat, op);
             logger.log(LOG_LEVEL_INFO, "\t%s", op.str().c_str());
 
@@ -63,7 +64,10 @@ public:
      * @brief 从`stdin`读取并应用敌方操作
      * @note 此方法断言所有敌方操作合法
      */
-    void read_and_apply_enemy_ops() { apply_enemy_ops(read_enemy_operations()); }
+    void read_and_apply_enemy_ops() {
+        last_enemy_ops = read_enemy_operations();
+        apply_enemy_ops();
+    }
 
     // 向动作列表中添加并立即执行一个操作
     void add_operation(const Operation &op) {

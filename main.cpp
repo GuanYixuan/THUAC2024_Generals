@@ -131,17 +131,20 @@ public:
             }
         }
 
+        // 识别“初始时聚兵”的策略
+        identify_aggregate_strategy();
+
         const MainGenerals* main_general = dynamic_cast<const MainGenerals*>(game_state.generals[my_seat]);
         const MainGenerals* enemy_general = dynamic_cast<const MainGenerals*>(game_state.generals[1 - my_seat]);
         int my_army = game_state[main_general->position].army;
         int enemy_army = game_state[enemy_general->position].army;
-        int enemy_additional_army = 0;
+        int army_around_enemy = 0; // 敌方主将旁边的军队数量
         for (int dir = 0; dir < DIRECTION_COUNT; ++dir) {
             Coord new_pos = main_general->position + DIRECTION_ARR[dir];
             if (new_pos.in_map() && game_state[new_pos].player == 1 - my_seat)
-                enemy_additional_army = std::max(enemy_additional_army, game_state[new_pos].army);
+                army_around_enemy = std::max(army_around_enemy, game_state[new_pos].army);
         }
-        enemy_army += enemy_additional_army;
+        enemy_army += army_around_enemy;
 
         // 参数更新
         oil_after_op = game_state.coin[my_seat];
@@ -150,8 +153,8 @@ public:
         // 判断主将的兵是否处于劣势
         army_disadvantage = my_army * 1.5 < enemy_army ||
                             (my_army + 15 * enemy_general->produce_level) * 1.5 < enemy_army + 15 * main_general->produce_level;
-        if (army_disadvantage) logger.log(LOG_LEVEL_INFO, "[Assess] Army disadvantage");
-        deterrence_analyzer.emplace(main_general, enemy_general, oil_after_op, game_state, enemy_additional_army);
+        if (army_disadvantage) logger.log(LOG_LEVEL_INFO, "[Assess] Army disadvantage (%d vs %d)", my_army, enemy_army);
+        deterrence_analyzer.emplace(main_general, enemy_general, oil_after_op, game_state, army_around_enemy);
         // 判断产量是否有优势
         oil_prod_advantage = oil_production >= game_state.calc_oil_production(1 - my_seat) + 4;
         if (oil_prod_advantage) logger.log(LOG_LEVEL_INFO, "[Assess] Oil production advantage");
@@ -173,8 +176,13 @@ public:
                 oil_savings = std::max(oil_savings, deterrence_analyzer->min_oil);
             else oil_savings = 70;
         }
-        logger.log(LOG_LEVEL_INFO, "Oil %d(+%d) vs %d(+%d), savings %d",
-                   oil_after_op, oil_production, game_state.coin[1 - my_seat], game_state.calc_oil_production(1 - my_seat), oil_savings);
+        logger.log(LOG_LEVEL_INFO, "Oil %d(+%d) vs %d(+%d), savings %d%s",
+                   oil_after_op, oil_production, game_state.coin[1 - my_seat], game_state.calc_oil_production(1 - my_seat), oil_savings,
+                   oil_prod_advantage ? " [Prod advantage]" : "");
+        logger.log(LOG_LEVEL_INFO, "Army %d(+%d) vs %d(+%d)%s%s",
+                   my_army, main_general->produce_level, enemy_army, enemy_general->produce_level,
+                   enemy_aggregate ? " [Aggregate]" : "",
+                   army_disadvantage ? " [Disadvantage]" : "");
 
         // 进攻搜索
         Attack_searcher searcher(my_seat, game_state);
@@ -317,6 +325,48 @@ private:
         return clusters;
     }
 
+    bool enemy_aggregate = false;
+    void identify_aggregate_strategy() {
+        static double feature_score = 0;
+        static int prev_single_army = 0;
+
+        // 计算敌方单兵最大军队数量
+        int max_single_army = 0;
+        for (int x = 0; x < Constant::col; ++x) for (int y = 0; y < Constant::row; ++y) {
+            const Cell& cell = game_state[Coord{x, y}];
+            if (cell.player != 1 - my_seat) continue;
+            if (cell.generals && dynamic_cast<const OilWell*>(cell.generals) == nullptr) continue;
+            max_single_army = std::max(max_single_army, cell.army);
+        }
+
+        const MainGenerals* main_general = dynamic_cast<const MainGenerals*>(game_state.generals[my_seat]);
+        const MainGenerals* enemy_general = dynamic_cast<const MainGenerals*>(game_state.generals[1 - my_seat]);
+
+        // 特征：对方主将不移动，全部行动力用于移兵
+        bool enemy_general_stay = !std::any_of(last_enemy_ops.begin(), last_enemy_ops.end(),
+                                               [](const Operation& op) { return op.opcode == OperationType::MOVE_GENERALS && op[0] == 1 - my_seat; });
+        enemy_general_stay &= std::count_if(last_enemy_ops.begin(), last_enemy_ops.end(),
+                                            [](const Operation& op) { return op.opcode == OperationType::MOVE_ARMY; }) == game_state.get_mobility(1 - my_seat);
+
+        // 特征：敌方单兵最大军队量越来越大
+        bool enemy_single_army_grow = max_single_army > prev_single_army;
+        prev_single_army = max_single_army;
+
+        // 特征：敌方主将与我方距离较远
+        bool enemy_general_far = Dist_map::effect_dist(main_general->position, enemy_general->position, true, PLAYER_MOVEMENT_VALUES[0]) > 0;
+
+        if (!enemy_general_stay) feature_score = 0;
+        else {
+            if (enemy_general_far) feature_score += 1;
+            if (!enemy_single_army_grow) feature_score -= 0.5;
+        }
+
+        if (feature_score >= 3 && !enemy_aggregate) {
+            enemy_aggregate = true;
+            logger.log(LOG_LEVEL_INFO, "[Assess] Enemy aggregate strategy detected!");
+        }
+    }
+
     void assess_upgrades() {
         // 计算“相遇时间”（仅考虑主将）
         const MainGenerals* main_general = dynamic_cast<const MainGenerals*>(game_state.generals[my_seat]);
@@ -373,12 +423,15 @@ private:
         // 注意：以下升级每回合至多进行一个
         int mob_tire = game_state.get_mobility_tire(my_seat);
         // 主将产量升级
+        bool aggregate_handle = enemy_aggregate && enemy_general->production_tire() == 2 &&
+                                oil_on_approach >= 35 + main_general->production_upgrade_cost();
         if (oil_after_op >= main_general->production_upgrade_cost() &&
-            oil_on_approach >= oil_savings + main_general->production_upgrade_cost()) {
+            (oil_on_approach >= oil_savings + main_general->production_upgrade_cost() || aggregate_handle)) {
 
             oil_after_op -= main_general->production_upgrade_cost();
             add_operation(Operation::upgrade_generals(my_seat, QualityType::PRODUCTION));
-            logger.log(LOG_LEVEL_INFO, "[Upgrade] Main general upgrade production to %d", main_general->produce_level);
+            logger.log(LOG_LEVEL_INFO, "[Upgrade%s] Main general upgrade production to %d",
+                       aggregate_handle ? ", aggregate handle" : "", main_general->produce_level + 1);
         }
         // 主将防御升级
         else if (unlock_upgrade_3 && oil_after_op >= main_general->defence_upgrade_cost() &&
