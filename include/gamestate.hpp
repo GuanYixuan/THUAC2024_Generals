@@ -475,6 +475,11 @@ public:
     bool has_desert_tech(int player) const noexcept { return tech_level[player][static_cast<int>(TechType::IMMUNE_SAND)] > 0; }
     // 计算指定玩家每回合的石油产量
     int calc_oil_production(int player) const noexcept;
+    // 计算指定玩家的油井数量
+    int count_oil_wells(int player) const noexcept {
+        return std::count_if(generals.begin(), generals.end(),
+                             [player](const Generals* gen) { return dynamic_cast<const OilWell*>(gen) && gen->player == player; });
+    }
 
     // 寻找将军id对应的格子，找不到返回`(-1,-1)`
     Coord find_general_position_by_id(int general_id) const noexcept {

@@ -6,6 +6,7 @@ import base64
 import pickle
 import io, json
 import datetime
+from termcolor import colored
 
 from DB_handler import DB_handler
 from DB_handler import Match, AI
@@ -65,6 +66,8 @@ class Fetcher:
         """
         print("Fetching starts at " + str(datetime.datetime.now()))
 
+        first_unfinished_match_time: Optional[datetime.datetime] = None
+
         search_player: Optional[str] = None
         if isinstance(player, str):
             search_player = player
@@ -96,6 +99,8 @@ class Fetcher:
                     continue
                 # 筛除评测失败/未完成的对局
                 if (None in tuple(map(lambda x: x["code"], match["info"]))) or (match["state"] != "评测成功"):
+                    if match["state"] == "评测中":
+                        first_unfinished_match_time = match_time
                     continue
 
                 match_players = tuple(map(lambda x: x["user"]["username"], match["info"]))
@@ -160,6 +165,9 @@ class Fetcher:
             # 时间已经早于end_time或查询结果数量不足query_step（无更多结果）
             if ending or len(results) < query_step: break
             query_offset += query_step
+
+        if first_unfinished_match_time:
+            print(colored("There are unfinished matches at %s or later" % first_unfinished_match_time, "yellow"))
 
     def __call_pycurl(self, url: str, extra_header: List[str] = []) -> str:
         headers = [
