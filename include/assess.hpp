@@ -588,30 +588,50 @@ std::optional<std::vector<Operation>> Attack_searcher::search(int extra_oil) con
     int atks_till_landing = 0;
     int atks_till_check_discharger = 0;
 
+    // 用于纯民兵攻击的假定将领
+    SubGenerals fake_general{-1, attacker_seat, state.generals[1-attacker_seat]->position};
+    fake_general.mobility_level = fake_general.produce_level = fake_general.defence_level = 0;
+    std::fill_n(fake_general.skills_cd, GENERAL_SKILL_COUNT, 10);
+
     // 对每个将领
     for (int i = 0, siz = state.generals.size(); i < siz; ++i) {
         const Generals* general = state.generals[i];
-        if (general->player != attacker_seat || dynamic_cast<const OilWell*>(general) != nullptr) continue;
-        if (state[general->position].army <= 1) continue;
+        bool pure_army_attack = (general->id == 1-attacker_seat); // 是否为纯民兵攻击
+
+        if (!pure_army_attack) {
+            if (general->player != attacker_seat || dynamic_cast<const OilWell*>(general) != nullptr) continue;
+            if (state[general->position].army <= 1) continue;
+        } else general = &fake_general;
 
         // 搜索汇合点
         static std::vector<Gather_point> gather_points{};
         Dist_map attacker_dist(state, general->position, Path_find_config(1.0, state.has_swamp_tech(attacker_seat)));
         gather_points.clear();
 
-        // 不携带军队的汇合点
-        for (int x = 0; x < Constant::col; ++x) for (int y = 0; y < Constant::row; ++y) {
-            Coord pos{x, y};
-            if (pos != general->position &&
-                (attacker_dist[pos] > general->mobility_level || state[pos].player != attacker_seat || !state.can_general_step_on(pos, attacker_seat))) continue;
-            // 其实需要检查整条路径
-            gather_points.emplace_back(pos, 0);
-        }
-        // 带军队的汇合点，目前限制在主将附近4格
-        for (int dir = 0; dir < DIRECTION_COUNT; ++dir) {
-            Coord pos = general->position + DIRECTION_ARR[dir];
-            if (!pos.in_map() || !state.can_general_step_on(pos, attacker_seat)) continue;
-            gather_points.emplace_back(pos, 1);
+        if (!pure_army_attack) { // 正常攻击
+            // 不携带军队的汇合点
+            for (int x = 0; x < Constant::col; ++x) for (int y = 0; y < Constant::row; ++y) {
+                Coord pos{x, y};
+                if (pos != general->position &&
+                    (attacker_dist[pos] > general->mobility_level || state[pos].player != attacker_seat || !state.can_general_step_on(pos, attacker_seat))) continue;
+                // 其实需要检查整条路径
+                gather_points.emplace_back(pos, 0);
+            }
+            // 带军队的汇合点，目前限制在主将附近4格
+            for (int dir = 0; dir < DIRECTION_COUNT; ++dir) {
+                Coord pos = general->position + DIRECTION_ARR[dir];
+                if (!pos.in_map() || !state.can_general_step_on(pos, attacker_seat)) continue;
+                gather_points.emplace_back(pos, 1);
+            }
+        } else { // 纯民兵攻击，根据行动力取目标附近几格作为可能汇合点
+            Dist_map gather_dist(state, general->position, Path_find_config(1.0, state.has_swamp_tech(attacker_seat), false));
+            for (int x = 0; x < Constant::col; ++x) for (int y = 0; y < Constant::row; ++y) {
+                Coord pos{x, y};
+                if (gather_dist[pos] > attacker_mobility || state[pos].player != attacker_seat || state[pos].army <= 1) continue;
+                if (state[pos].generals && !dynamic_cast<const OilWell*>(state[pos].generals)) continue; // 排除主副将
+
+                gather_points.emplace_back(pos, 0);
+            }
         }
 
         // 对每个汇合点以及每种连招
@@ -628,6 +648,7 @@ std::optional<std::vector<Operation>> Attack_searcher::search(int extra_oil) con
             int skill_cost = tactic.skill_cost();
             if (oil + current_skill_value < skill_cost) continue; // 根据rush信息再次检查油量
             if (tactic.can_rush && gather_point_army <= 1) continue; // gather_point我方军队数量不足，无法rush
+            assert(!pure_army_attack || !tactic.can_rush); // 纯民兵攻击时不允许rush
 
             // 距离检查
             int eff_dist = Dist_map::effect_dist(gather_point, enemy_general->position, tactic.can_rush, remain_move);
@@ -690,8 +711,8 @@ std::optional<std::vector<Operation>> Attack_searcher::search(int extra_oil) con
                 if (!calc_pass) continue;
                 atks_till_check_discharger++;
 
-                // 补充移动到汇合点的操作
-                if (gather_point != general->position) {
+                // 补充移动到汇合点的操作，仅在普通攻击下才需要
+                if (gather_point != general->position && !pure_army_attack) {
                     if (!gather.army_steps) attack_ops.insert(attack_ops.begin(), Operation::move_generals(general->id, gather_point));
                     else {
                         auto gather_point_it = std::find_if(attack_ops.begin(), attack_ops.end(),
@@ -728,6 +749,7 @@ std::optional<std::vector<Operation>> Attack_searcher::search(int extra_oil) con
                     const Generals* cell_general = state[pos].generals;
                     if (pos == landing_point) cell_general = general;
                     else if (pos == general->position) cell_general = nullptr;
+                    if (cell_general && cell_general->id < 0) cell_general = state[landing_point].generals; // 虚拟将领不能释放技能
 
                     if (cell_general && dynamic_cast<const OilWell*>(cell_general)) continue; // 油井无法利用
                     if (cell_general) { // 有将领（主将或副将）
@@ -808,8 +830,9 @@ std::optional<std::vector<Operation>> Attack_searcher::search(int extra_oil) con
 
                 // 可攻击，导出行动
                 if (attacker_seat == my_seat)
-                    logger.log(LOG_LEVEL_INFO, "\t\t\tComfirmed:[%s] Army left %d, path size %d, discount %d",
-                               tactic.str().c_str(), army_left.back(), path.size()-1, skill_discount);
+                    logger.log(LOG_LEVEL_INFO, "\t\t\tComfirmed:[%s]%s Army left %d, path size %d, discount %d",
+                               tactic.str().c_str(), pure_army_attack ? "[Pure Army Attack]" : "",
+                               army_left.back(), path.size()-1, skill_discount);
                 return attack_ops;
             }
         }

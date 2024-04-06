@@ -49,7 +49,9 @@ bool call_generals(GameState &gamestate, int player, const Coord& location) {
 * 返回值：如果移动成功，返回 `true`；否则返回 `false`。 */
 bool army_move(const Coord& location, GameState &gamestate, int player, Direction direction, int num) {
     assert(location.in_map() && (player == 0 || player == 1));
+    if (num == 0) return false;
     assert(num > 0);
+
     Cell& cell = gamestate[location];
 
     if (cell.player != player) return false; // 操作格子非法
