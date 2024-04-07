@@ -76,7 +76,7 @@ class Fetcher:
 
         if dig_into_history: search_player = None
 
-        query_step: int = min(20, round(max_count * 1.2))
+        query_step: int = 200
         query_offset: int = 0
         download_count: int = 0
         while True:
@@ -99,7 +99,7 @@ class Fetcher:
                     continue
                 # 筛除评测失败/未完成的对局
                 if (None in tuple(map(lambda x: x["code"], match["info"]))) or (match["state"] != "评测成功"):
-                    if match["state"] == "评测中":
+                    if match["state"] == "评测中" or match["state"] == "准备中":
                         first_unfinished_match_time = match_time
                     continue
 
@@ -172,7 +172,8 @@ class Fetcher:
     def __call_pycurl(self, url: str, extra_header: List[str] = []) -> str:
         headers = [
             "authority: api.saiblo.net", "accept: application/json, text/plain, */*", "accept-language: zh-CN,zhq=0.9",
-            "authorization: Bearer %s" % self.auth_key, "origin: https://www.saiblo.net", "referer: https://www.saiblo.net/"
+            "authorization: Bearer %s" % self.auth_key, "origin: https://www.saiblo.net", "referer: https://www.saiblo.net/",
+            "accept-encoding: gzip, deflate"
         ]
         headers.extend(extra_header)
 
@@ -181,6 +182,7 @@ class Fetcher:
         c.setopt(pycurl.URL, url)
         c.setopt(pycurl.HTTPHEADER, headers)
         c.setopt(pycurl.WRITEDATA, buffer)
+        c.setopt(pycurl.ENCODING, '') # This enables pycurl to automatically handle decompression
         c.perform()
         c.close()
 
