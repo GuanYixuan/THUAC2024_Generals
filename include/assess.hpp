@@ -995,12 +995,13 @@ std::optional<Militia_plan> Militia_analyzer::search_plan_from_militia(const Gen
 
         if (area.max_army < army_required) continue; // 兵力不足
 
+        // 计算方案：从集合点处走到目标点
+        std::vector<Coord> path = target_dist.path_to_origin(info.clostest_point);
+
         // 计算方案：兵力汇集到最近点处
-        const auto& gather_plan = calc_gather_plan(info, army_required, support_mode ? max_support_steps : -1);
+        const auto& gather_plan = calc_gather_plan(info, army_required, support_mode ? max_support_steps - (path.size() - 1) : -1);
         Militia_plan plan(target, info.area, gather_plan.second, gather_plan.first);
 
-        // 再从集合点处走到目标点
-        std::vector<Coord> path = target_dist.path_to_origin(info.clostest_point);
         for (int i = 1, siz = path.size(); i < siz; ++i) plan.plan.emplace_back(path[i-1], from_coord(path[i-1], path[i]));
 
         return plan;

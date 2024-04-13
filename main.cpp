@@ -66,7 +66,7 @@ public:
     // 构造函数：防御
     Strategy_target(const Coord& coord, const Danger& danger) noexcept : coord(coord), general(danger.enemy), danger(danger) {}
     // 构造函数：撤退
-    Strategy_target(const Danger& danger) noexcept : coord(danger.enemy->position), general(danger.enemy), danger(danger) {}
+    Strategy_target(const Danger& danger) noexcept : coord(), general(danger.enemy), danger(danger) {}
 };
 class General_strategy {
 public:
@@ -204,32 +204,30 @@ public:
         }
 
         // 检查当前的支援计划
-        if (militia_task && militia_task->type == Militia_action_type::SUPPORT && militia_task->plan.target_pos.dist_to(main_general->position) > 2) {
+        if (militia_task && militia_task->type == Militia_action_type::SUPPORT && militia_task->plan.target_pos != main_general->position) {
             logger.log(LOG_LEVEL_INFO, "[Support] Militia support plan expired");
             militia_task.reset();
         }
 
         // 考虑进行支援
         if (!militia_task || militia_task->type == Militia_action_type::OCCUPY_FREE)
-        if (game_state.round >= 11 && (army_disadvantage || my_army < 20)) {
-            int target_army = 20;
-            target_army = std::max(target_army, std::min(enemy_army - 10, (int)(enemy_army / 1.5) + 5));
-            logger.log(LOG_LEVEL_INFO, "[Support] Consider support, target army %d", target_army);
+        if (game_state.round >= 11 && (army_disadvantage || my_army < 20 || game_state.round <= 20)) {
+            logger.log(LOG_LEVEL_INFO, "[Support] Consider support");
 
             Militia_analyzer m_analyzer(game_state);
-            for (int max_step = 12, starting = true; max_step > 0; max_step-=2) {
-                std::optional<Militia_plan> plan = m_analyzer.search_plan_from_militia(main_general, max_step);
+            std::optional<Militia_plan> best_plan;
+            for (int step = 2; step <= 12; step += 2) {
+                std::optional<Militia_plan> plan = m_analyzer.search_plan_from_militia(main_general, step);
                 if (!plan) continue;
-                if (starting) militia_task.emplace(Militia_action_type::SUPPORT, *plan, game_state.round);
-                starting = false;
+                if (plan->army_used < step) continue; // 性价比太低
 
-                if (plan->army_used < target_army - my_army) break;
-                else militia_task.emplace(Militia_action_type::SUPPORT, *plan, game_state.round);
+                if (!best_plan || plan->army_used > best_plan->army_used) best_plan = plan;
             }
-            if (militia_task && militia_task->type == Militia_action_type::SUPPORT) {
+            if (best_plan) {
+                militia_task.emplace(Militia_action_type::SUPPORT, *best_plan, game_state.round);
                 logger.log(LOG_LEVEL_INFO, "[Support] Militia support plan size %d, army %d",
-                           militia_task->step_count(), militia_task->plan.army_used);
-                for (const auto& op : militia_task->plan.plan)
+                           militia_task->step_count(), best_plan->army_used);
+                for (const auto& op : best_plan->plan)
                     logger.log(LOG_LEVEL_INFO, "\t%s->%s", op.first.str().c_str(), (op.first + DIRECTION_ARR[op.second]).str().c_str());
             } else logger.log(LOG_LEVEL_INFO, "[Support] No support plan found");
         }
@@ -372,6 +370,9 @@ private:
             enemy_aggregate = true;
             logger.log(LOG_LEVEL_INFO, "[Assess] Enemy aggregate strategy detected!");
         }
+        if (!enemy_aggregate)
+            logger.log(LOG_LEVEL_INFO, "[Assess] Aggregate detection score: %.1f, stay = %d, far = %d, grow = %d",
+                feature_score, enemy_general_stay, enemy_general_far, enemy_single_army_grow);
     }
 
     void assess_upgrades() {
@@ -497,7 +498,14 @@ private:
             logger.log(LOG_LEVEL_INFO, "[Assess] General %s with army %d, defence mult %.2f, enemy lookahead oil %d",
                        general->position.str().c_str(), curr_army, defence_mult, enemy_lookahead_oil);
 
-            // 考虑是否在危险范围内
+            // 考虑是否在危险范围内（新方法）
+            bool threatened = false;
+            GameState temp_state;
+            temp_state.copy_as(game_state);
+            Attack_searcher searcher(1-my_seat, temp_state);
+            if (searcher.search(enemy_lookahead_oil - game_state.coin[1 - my_seat])) threatened = true;
+
+            // 考虑是否在危险范围内（旧方法）
             Danger most_danger{100000, nullptr, Critical_tactic(false, BASE_TACTICS[0])};
             for (int j = 0; j < siz; ++j) {
                 const Generals* enemy = game_state.generals[j];
@@ -532,9 +540,10 @@ private:
             }
             logger.log(LOG_LEVEL_INFO, "[Assess] General %s most dangerous [%s], eff dist %d", general->position.str().c_str(), most_danger.tactic.str().c_str(), most_danger.eff_dist);
             // 撤退：在攻击范围内
-            if (most_danger.eff_dist < 0) {
+            if (threatened) {
                 strategies.emplace_back(General_strategy{i, General_strategy_type::RETREAT, Strategy_target(most_danger)});
-                logger.log(LOG_LEVEL_INFO, "[Allocate:retreat] General %s retreat %s, eff dist %d", general->position.str().c_str(), most_danger.enemy->position.str().c_str(), most_danger.eff_dist);
+                logger.log(LOG_LEVEL_INFO, "[Allocate:retreat] General %s retreat %s, eff dist %d",
+                    general->position.str().c_str(), most_danger.enemy ? most_danger.enemy->position.str().c_str() : "", most_danger.eff_dist);
                 continue;
             }
 
@@ -545,6 +554,12 @@ private:
                     logger.log(LOG_LEVEL_INFO, "[Allocate:attack] General %s attack enemy general %s", general->position.str().c_str(), enemy_general->position.str().c_str());
                     continue;
                 }
+
+            // 假如不进攻也不撤退，则等待支援完成
+            if (dynamic_cast<const MainGenerals*>(general) && militia_task && militia_task->type == Militia_action_type::SUPPORT) {
+                logger.log(LOG_LEVEL_INFO, "[Allocate:wait] General %s wait for militia support", general->position.str().c_str());
+                continue;
+            }
 
             // 占领：4格内油田考虑使用民兵占领
             Dist_map near_map(game_state, general->position, Path_find_config{1.0, game_state.has_swamp_tech(my_seat)});
@@ -775,11 +790,12 @@ private:
                 } else logger.log(LOG_LEVEL_INFO, "\t[Attack] General at %s cannot reach enemy %s", general->position.str().c_str(), enemy->position.str().c_str());
             } else if (strategy.type == General_strategy_type::RETREAT) {
                 const Generals* enemy = strategy.target.general;
+                std::optional<Coord> enemy_pos = enemy ? std::make_optional(enemy->position) : std::nullopt;
                 Move_cost_cfg move_cfg(0.1, 0, -1); // 距离敌人越远越好
 
                 // 进行移动搜索
                 logger.log(LOG_LEVEL_DEBUG, "\t[Retreat] Move search:");
-                Maingeneral_mover mover(game_state, std::min(general->mobility_level, remain_move_count), enemy->position);
+                Maingeneral_mover mover(game_state, std::min(general->mobility_level, remain_move_count), enemy_pos);
                 mover << move_cfg;
                 auto move_plans = mover.search();
                 for (const auto& move_plan : move_plans) {
@@ -798,6 +814,7 @@ private:
                 }
 
                 // 否则尝试空袭一次
+                if (enemy)
                 if (oil_after_op >= GENERAL_SKILL_COST[SkillType::STRIKE] && !general->cd(SkillType::STRIKE) &&
                     enemy->position.in_attack_range(general->position)) {
 
@@ -834,7 +851,7 @@ private:
                     temp_state.copy_as(game_state);
                     execute_operation(temp_state, my_seat, Operation::upgrade_generals(general->id, QualityType::DEFENCE));
 
-                    Maingeneral_mover mover(temp_state, std::min(general->mobility_level, remain_move_count), enemy->position);
+                    Maingeneral_mover mover(temp_state, std::min(general->mobility_level, remain_move_count), enemy_pos);
                     mover << move_cfg;
                     auto move_plans = mover.search();
                     for (const auto& move_plan : move_plans) {
@@ -862,7 +879,7 @@ private:
                     temp_state.copy_as(game_state);
                     execute_operation(temp_state, my_seat, Operation::upgrade_generals(general->id, QualityType::MOBILITY));
 
-                    Maingeneral_mover mover(temp_state, std::min(GENERAL_MOVEMENT_VALUES[general->movement_tire()+1], remain_move_count), enemy->position);
+                    Maingeneral_mover mover(temp_state, std::min(GENERAL_MOVEMENT_VALUES[general->movement_tire()+1], remain_move_count), enemy_pos);
                     mover << move_cfg; // 距离敌人越远越好
                     auto move_plans = mover.search();
                     for (const auto& move_plan : move_plans) {
