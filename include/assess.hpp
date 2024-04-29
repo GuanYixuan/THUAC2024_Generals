@@ -218,13 +218,28 @@ public:
 
 };
 
+// 描述一次找到的进攻
+struct Attack_info {
+    // 进攻发起位置
+    Coord origin;
+    // 连招类型
+    Critical_tactic tactic;
+    // 是否是纯民兵进攻
+    bool pure_army_attack;
+
+    // 详细动作列表
+    std::vector<Operation> ops;
+
+    Attack_info(Coord origin, const Critical_tactic& tactic, bool pure_army_attack, const std::vector<Operation>& ops) noexcept :
+        origin(origin), tactic(tactic), pure_army_attack(pure_army_attack), ops(ops) {}
+};
 // 攻击搜索器
 class Attack_searcher {
 public:
     // 指定攻击搜索器的阵营和基于的状态
     Attack_searcher(int attacker_seat, const GameState& state) noexcept : attacker_seat(attacker_seat), state(state) {}
     // 利用攻击搜索器进行一次完整的单将攻击搜索，仅返回一个结果
-    std::optional<std::vector<Operation>> search(int extra_oil = 0) const noexcept;
+    std::optional<Attack_info> search(int extra_oil = 0) const noexcept;
 
 private:
     const int attacker_seat;
@@ -551,7 +566,7 @@ int Dist_map::effect_dist(const Coord& pos, const Coord& general_pos, bool can_r
 
 std::vector<Attack_searcher::Skill_discharger> Attack_searcher::skill_table = {};
 
-std::optional<std::vector<Operation>> Attack_searcher::search(int extra_oil) const noexcept {
+std::optional<Attack_info> Attack_searcher::search(int extra_oil) const noexcept {
     static std::vector<int> army_left{};
     static std::vector<Coord> landing_points{};
     static std::vector<Operation> attack_ops{};
@@ -833,12 +848,10 @@ std::optional<std::vector<Operation>> Attack_searcher::search(int extra_oil) con
                     logger.log(LOG_LEVEL_INFO, "\t\t\tComfirmed:[%s]%s Army left %d, path size %d, discount %d",
                                tactic.str().c_str(), pure_army_attack ? "[Pure Army Attack]" : "",
                                army_left.back(), path.size()-1, skill_discount);
-                return attack_ops;
+                return Attack_info(pure_army_attack ? gather.pos : general->position, tactic, pure_army_attack, attack_ops);
             }
         }
     }
-    if (atks_till_landing > 100)
-        logger.log(LOG_LEVEL_INFO, "No attack plan found, till_landing = %d, till_check_discharger = %d", atks_till_landing, atks_till_check_discharger);
     return std::nullopt;
 }
 
