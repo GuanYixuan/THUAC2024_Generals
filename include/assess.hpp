@@ -333,7 +333,7 @@ struct Move_plan {
 };
 
 // 主将移动搜索算法
-class Maingeneral_mover {
+class General_mover {
 public:
     // 最大步数
     int steps_available;
@@ -346,19 +346,20 @@ public:
     Path_find_config path_cfg;
 
     // 构造函数，目前默认立场是我方
-    Maingeneral_mover(const GameState& state, int steps_available, std::optional<Coord> target_pos) noexcept :
-        state(state), steps_available(steps_available), target_pos(target_pos),
+    General_mover(const GameState& state, const Generals* gen_to_move, int steps_available, std::optional<Coord> target_pos) noexcept :
+        state(state), gen_to_move(gen_to_move), steps_available(steps_available), target_pos(target_pos),
         cost_cfg(1, 2, 4),
         path_cfg(3.0, state.has_swamp_tech(my_seat), true) {}
 
     // 参数设置函数
-    Maingeneral_mover& operator<< (const Move_cost_cfg& cfg) noexcept { cost_cfg = cfg; return *this; }
+    General_mover& operator<< (const Move_cost_cfg& cfg) noexcept { cost_cfg = cfg; return *this; }
 
     // 进行寻路搜索
     std::vector<Move_plan> search() const noexcept;
 
 private:
     const GameState& state;
+    const Generals* gen_to_move;
 };
 
 // **************************************** 民兵分析器相关声明 ****************************************
@@ -740,7 +741,7 @@ std::optional<Attack_info> Attack_searcher::search(int extra_oil) const noexcept
                 }
 
                 // 最后需要确定能够找到用于释放技能的将领，并重新核算费用
-                if (attacker_seat == my_seat || true) {
+                if (attacker_seat == my_seat) {
                     logger.log(LOG_LEVEL_DEBUG, "\t[%s] skill_cost = %d", tactic.str().c_str(), skill_cost);
                     logger.log(LOG_LEVEL_DEBUG, "\t\tGather at %s (army_steps = %d), Landing at %s, army_left = %d",
                                gather_point.str().c_str(), gather.army_steps, landing_point.str().c_str(), army_left.back());
@@ -857,23 +858,23 @@ std::optional<Attack_info> Attack_searcher::search(int extra_oil) const noexcept
 
 // **************************************** 移动搜索实现 ****************************************
 
-std::vector<Move_plan> Maingeneral_mover::search() const noexcept {
+std::vector<Move_plan> General_mover::search() const noexcept {
     static std::vector<int> army_left{};
 
     // 参数初始化
     std::vector<Move_plan> ret;
-    int extra_oil = state.calc_oil_production(1-my_seat) * 2; // 额外的油量
-    const MainGenerals* my_general = dynamic_cast<const MainGenerals*>(state.generals[my_seat]);
+    bool main_general = dynamic_cast<const MainGenerals*>(gen_to_move);
+    int extra_oil = main_general ? (state.calc_oil_production(1-my_seat) * 2) : (50 - state.coin[1-my_seat]); // 额外的油量（认为对方只用50油打副将）
     std::optional<Dist_map> target_dist = target_pos ? std::make_optional<Dist_map>(state, *target_pos, path_cfg) : std::nullopt;
 
     // 计算主将的可行走范围
     static std::vector<Coord> avail_terminals{};
-    Dist_map general_dist(state, my_general->position, Path_find_config(1.0, state.has_swamp_tech(my_seat)));
+    Dist_map general_dist(state, gen_to_move->position, Path_find_config(1.0, state.has_swamp_tech(my_seat)));
 
     avail_terminals.clear();
     for (int x = 0; x < Constant::col; ++x) for (int y = 0; y < Constant::row; ++y) {
         Coord pos{x, y};
-        if (pos != my_general->position && (general_dist[pos] > steps_available || !state.can_general_step_on(pos, my_seat))) continue;
+        if (pos != gen_to_move->position && (general_dist[pos] > steps_available || !state.can_general_step_on(pos, my_seat))) continue;
         avail_terminals.push_back(pos);
     }
 
@@ -883,7 +884,7 @@ std::vector<Move_plan> Maingeneral_mover::search() const noexcept {
         std::reverse(path.begin(), path.end());
 
         army_left.clear();
-        army_left.push_back(state[my_general->position].army);
+        army_left.push_back(state[gen_to_move->position].army);
 
         Move_plan move_plan(terminal, my_seat);
 
@@ -914,8 +915,8 @@ std::vector<Move_plan> Maingeneral_mover::search() const noexcept {
         if (!calc_pass) continue;
 
         // 把主将移动也加上
-        if (terminal != my_general->position)
-            move_plan.ops += Operation::move_generals(my_general->id, terminal);
+        if (terminal != gen_to_move->position)
+            move_plan.ops += Operation::move_generals(gen_to_move->id, terminal);
 
         // 然后开始计算安全性
         GameState temp_state;
