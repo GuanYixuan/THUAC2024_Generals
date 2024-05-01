@@ -630,7 +630,12 @@ std::optional<Attack_info> Attack_searcher::search(int extra_oil) const noexcept
                 Coord pos{x, y};
                 if (pos != general->position &&
                     (attacker_dist[pos] > general->mobility_level || state[pos].player != attacker_seat || !state.can_general_step_on(pos, attacker_seat))) continue;
-                // 其实需要检查整条路径
+
+                // 检查整条路径
+                bool can_gather = true;
+                for (const Coord& path_pos : attacker_dist.path_to_origin(pos)) if (state[path_pos].player != attacker_seat) can_gather = false;
+                if (!can_gather) continue;
+
                 gather_points.emplace_back(pos, 0);
             }
             // 带军队的汇合点，目前限制在主将附近4格
