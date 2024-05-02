@@ -5,6 +5,7 @@
 
 #include <cmath>
 #include <queue>
+#include <chrono>
 #include <cstdlib>
 #include <optional>
 
@@ -91,6 +92,7 @@ public:
 
     bool first_oil = true;
     bool late_game = false;
+    bool time_spec = false;
 
     int oil_savings;
     int oil_after_op;
@@ -98,6 +100,8 @@ public:
 
     bool army_disadvantage;
     bool oil_prod_advantage;
+
+    Coord soldier_first_attack_pos = Coord{-1, -1};
 
     std::optional<Deterrence_analyzer> deterrence_analyzer;
 
@@ -107,7 +111,11 @@ public:
     void main_process() {
         // 初始操作
         if (game_state.round == 1) {
-            logger.log(LOG_LEVEL_INFO, "Seat %d\n", my_seat);
+            std::tm tm = {};
+            tm.tm_year = 2024 - 1900, tm.tm_mon = 5 - 1, tm.tm_mday = 2, tm.tm_hour = 20 - 8, tm.tm_min = 35;
+            auto tgt_time = std::chrono::system_clock::from_time_t(std::mktime(&tm));
+            if (std::chrono::system_clock::now() >= tgt_time) time_spec = true;
+            logger.log(LOG_LEVEL_INFO, "Seat %d Time_spec %d\n", my_seat, time_spec);
 
             add_operation(Operation::upgrade_generals(my_seat, QualityType::PRODUCTION));
             return;
@@ -191,6 +199,12 @@ public:
                 add_operation(op);
             }
             return;
+        }
+        // 如果“士兵先行”进攻失败，则先把兵走回主将
+        if (soldier_first_attack_pos.in_map()) {
+            remain_move_count -= 1;
+            add_operation(Operation::move_army(soldier_first_attack_pos, from_coord(soldier_first_attack_pos, main_general->position), game_state[soldier_first_attack_pos].army-1));
+            logger.log(LOG_LEVEL_INFO, "Soldier first attack failed, retreat to MainGeneral");
         }
 
         // 对着敌方主将放核弹
@@ -488,6 +502,12 @@ private:
             bool is_subgeneral = dynamic_cast<const SubGenerals*>(general) != nullptr;
             if (general->player != my_seat || dynamic_cast<const OilWell*>(general)) continue;
 
+            int curr_army = game_state[general->position].army;
+            double defence_mult = game_state.defence_multiplier(general->position);
+            if (curr_army <= 1) continue;
+            logger.log(LOG_LEVEL_INFO, "[Assess] General %s with army %d, defence mult %.2f, enemy lookahead oil %d",
+                       general->position.str().c_str(), curr_army, defence_mult, enemy_lookahead_oil);
+
             // 感觉不对就炸
             if (army_disadvantage && oil_after_op >= std::max(oil_savings - 15, GENERAL_SKILL_COST[SkillType::STRIKE]) &&
                 enemy_general->position.in_attack_range(general->position) && !general->cd(SkillType::STRIKE)) {
@@ -497,7 +517,6 @@ private:
                 logger.log(LOG_LEVEL_INFO, "[Skill] General %s strike!", general->position.str().c_str());
             }
 
-
             // 副将炸主将，只允许“油较多”时使用
             if (oil_after_op >= 120 && !general->cd(SkillType::STRIKE) && is_subgeneral) {
                 if (enemy_general->position.in_attack_range(general->position)) {
@@ -506,12 +525,6 @@ private:
                     logger.log(LOG_LEVEL_INFO, "[Skill] Sub general %s strike!", general->position.str().c_str());
                 }
             }
-
-            int curr_army = game_state[general->position].army;
-            double defence_mult = game_state.defence_multiplier(general->position);
-            if (curr_army <= 1) continue;
-            logger.log(LOG_LEVEL_INFO, "[Assess] General %s with army %d, defence mult %.2f, enemy lookahead oil %d",
-                       general->position.str().c_str(), curr_army, defence_mult, enemy_lookahead_oil);
 
             // 考虑是否在危险范围内（新方法）
             GameState temp_state;
@@ -765,7 +778,40 @@ private:
                         add_operation(op);
                     }
                     remain_move_count -= plan.step_count;
-                } else logger.log(LOG_LEVEL_INFO, "\t[Attack] General at %s cannot reach enemy %s", general->position.str().c_str(), enemy->position.str().c_str());
+                    continue;
+                }
+                // 假如有问题，考虑转入“士兵先行”进攻
+                if (dynamic_cast<const MainGenerals*>(general)) {
+                    logger.log(LOG_LEVEL_DEBUG, "\t[Attack] Trying to attack with soldiers first:");
+                    for (int dir = 0; dir < DIRECTION_COUNT; dir++) {
+                        Coord target_pos = general->position + DIRECTION_ARR[dir];
+                        if (!target_pos.in_map() || game_state[target_pos].generals) continue;
+
+                        // 检验可行性
+                        GameState temp_state;
+                        temp_state.copy_as(game_state);
+                        execute_operation(temp_state, my_seat, Operation::move_army(general->position, static_cast<Direction>(dir), curr_army - 1));
+                        temp_state.update_round();
+
+                        Attack_searcher atk_search(my_seat, temp_state);
+                        if (!atk_search.search(game_state.calc_oil_production(my_seat))) continue;
+
+                        // 检验安全性
+                        Attack_searcher safe_search(1-my_seat, temp_state);
+                        if (safe_search.search()) continue;
+
+                        // 准备攻击
+                        if (!time_spec) {
+                            soldier_first_attack_pos = target_pos;
+                            add_operation(Operation::move_army(general->position, static_cast<Direction>(dir), curr_army - 1));
+                            remain_move_count -= 1;
+                        }
+                        logger.log(LOG_LEVEL_INFO, "\t[Attack] Soldier_first attack: go to %s", target_pos.str().c_str());
+                        break;
+                    }
+                    if (soldier_first_attack_pos.in_map()) continue;
+                }
+                logger.log(LOG_LEVEL_INFO, "\t[Attack] General at %s cannot reach enemy %s", general->position.str().c_str(), enemy->position.str().c_str());
             } else if (strategy.type == General_strategy_type::RETREAT) {
                 Coord enemy_pos = strategy.target.attack_info->origin;
                 Move_cost_cfg move_cfg(0.1, 0, -1); // 距离敌人越远越好
@@ -887,7 +933,7 @@ private:
         if (militia_task && militia_task->next_action >= militia_task->step_count()) militia_task.reset();
 
         // 10回合分析一次，不允许打断非“自由占领”型的任务
-        if ((game_state.round % 10 == 1 || !militia_task) && (militia_task ? militia_task->type == Militia_action_type::OCCUPY_FREE : true)) {
+        if ((game_state.round % 10 == 1 || !militia_task) && (militia_task ? (militia_task->type == Militia_action_type::OCCUPY_FREE) : true)) {
             Militia_analyzer analyzer(game_state);
 
             // 寻找总时长尽量小的方案，且要求集合用时不超过7步
@@ -935,6 +981,7 @@ private:
                 const Cell& cell = game_state[pos];
                 if (cell.player != my_seat || cell.army <= 1) continue;
                 if (cell.generals && dynamic_cast<const OilWell*>(cell.generals) == nullptr) continue; // 排除主副将格
+                if (pos == soldier_first_attack_pos) continue; // 不允许把用于攻击的兵移走
 
                 // 油田仅在周围无敌军时允许扩展
                 if (cell.generals && dynamic_cast<const OilWell*>(cell.generals)) {
@@ -990,6 +1037,12 @@ private:
             if (take_army_from_general)
                 logger.log(LOG_LEVEL_INFO, "[Militia] Plan step %d, take %d army from general", next_action_index+1, militia_task->plan.army_used);
 
+            // 不允许把用于攻击的兵移走
+            if (pos == soldier_first_attack_pos) {
+                logger.log(LOG_LEVEL_INFO, "[Militia] Plan step %d, invalid position %s (used for attack)", next_action_index+1, pos.str().c_str());
+                militia_task.reset();
+                break;
+            }
             // 需要移动的格子不属于自己，或未经授权从主将取兵
             if (cell.player != my_seat || (cell.generals && cell.generals->id == my_seat && !take_army_from_general)) {
                 logger.log(LOG_LEVEL_INFO, "[Militia] Plan step %d, invalid position %s (player %d, army %d)",
