@@ -90,6 +90,8 @@ public:
     std::optional<Oil_cluster> cluster;
 
     bool first_oil = true;
+    bool late_game = false;
+
     int oil_savings;
     int oil_after_op;
     int remain_move_count;
@@ -118,7 +120,7 @@ public:
         }
 
         // 识别“初始时聚兵”的策略
-        identify_aggregate_strategy();
+        // identify_aggregate_strategy();
 
         const MainGenerals* main_general = dynamic_cast<const MainGenerals*>(game_state.generals[my_seat]);
         const MainGenerals* enemy_general = dynamic_cast<const MainGenerals*>(game_state.generals[1 - my_seat]);
@@ -151,6 +153,8 @@ public:
         // 判断产量是否有优势
         oil_prod_advantage = oil_production >= game_state.calc_oil_production(1 - my_seat) + 4;
         if (oil_prod_advantage) logger.log(LOG_LEVEL_INFO, "[Assess] Oil production advantage");
+        // 判断是否是“后期”
+        late_game = game_state.coin[my_seat] >= 180;
 
         // 计算我方威慑范围
         if (deterrence_analyzer->rush_tactic || deterrence_analyzer->non_rush_tactic) { // 有威慑
@@ -477,7 +481,6 @@ private:
         const MainGenerals* enemy_general = dynamic_cast<const MainGenerals*>(game_state.generals[1 - my_seat]);
         int enemy_lookahead_oil = game_state.coin[1 - my_seat] + game_state.calc_oil_production(1 - my_seat) * 2; // 取两回合后的油量
 
-        // 判断是否油很有优势
         int my_prod = game_state.calc_oil_production(my_seat);
 
         for (int i = 0, siz = game_state.generals.size(); i < siz; ++i) {
@@ -487,8 +490,22 @@ private:
 
             // 感觉不对就炸
             if (army_disadvantage && oil_after_op >= std::max(oil_savings - 15, GENERAL_SKILL_COST[SkillType::STRIKE]) &&
-                enemy_general->position.in_attack_range(general->position) && !general->cd(SkillType::STRIKE))
+                enemy_general->position.in_attack_range(general->position) && !general->cd(SkillType::STRIKE)) {
+
+                add_operation(Operation::generals_skill(general->id, SkillType::STRIKE, enemy_general->position));
+                oil_after_op -= GENERAL_SKILL_COST[SkillType::STRIKE];
+                logger.log(LOG_LEVEL_INFO, "[Skill] General %s strike!", general->position.str().c_str());
+            }
+
+
+            // 副将炸主将，只允许“油较多”时使用
+            if (oil_after_op >= 120 && !general->cd(SkillType::STRIKE) && is_subgeneral) {
+                if (enemy_general->position.in_attack_range(general->position)) {
                     add_operation(Operation::generals_skill(general->id, SkillType::STRIKE, enemy_general->position));
+                    oil_after_op -= GENERAL_SKILL_COST[SkillType::STRIKE];
+                    logger.log(LOG_LEVEL_INFO, "[Skill] Sub general %s strike!", general->position.str().c_str());
+                }
+            }
 
             int curr_army = game_state[general->position].army;
             double defence_mult = game_state.defence_multiplier(general->position);
@@ -514,7 +531,9 @@ private:
 
             // 假如能够威慑敌方，但敌方无法威慑我，则主动贴近
             int enemy_eff_dist = Dist_map::effect_dist(general->position, enemy_general->position, true, game_state.get_mobility(my_seat));
-            bool atk_cond = (oil_after_op >= oil_savings && my_prod > 0 && enemy_eff_dist <= 1 && threat_eff_dist > enemy_eff_dist) || oil_after_op >= 300;
+            Deterrence_analyzer sub_general_det(general, enemy_general, game_state.coin[my_seat], game_state);
+            bool atk_cond = (oil_after_op >= oil_savings || (is_subgeneral && oil_after_op >= sub_general_det.min_oil)) && (my_prod > 0 && enemy_eff_dist <= 1 && threat_eff_dist > enemy_eff_dist);
+            atk_cond |= oil_after_op >= 300;
             if (atk_cond) { // threat_eff_dist在找不到威胁时还是有问题的
                 strategies.emplace_back(General_strategy{i, General_strategy_type::ATTACK, Strategy_target(enemy_general)});
                 logger.log(LOG_LEVEL_INFO, "[Allocate:attack] General %s attack enemy general %s", general->position.str().c_str(), enemy_general->position.str().c_str());
@@ -527,12 +546,13 @@ private:
                 continue;
             }
 
-            // 占领：4格内油田考虑使用民兵占领
+            // 占领：4格内油田或副将考虑使用民兵占领（打副将仅在后期有效）
             Dist_map near_map(game_state, general->position, Path_find_config{1.0, game_state.has_swamp_tech(my_seat)});
             int best_well = -1;
-            for (int j = 0; j < siz; ++j) {
+            for (int j = PLAYER_COUNT; j < siz; ++j) {
                 const Generals* oil_well = game_state.generals[j];
-                if (dynamic_cast<const OilWell*>(oil_well) == nullptr || oil_well->player == my_seat) continue;
+                if (oil_well->player == my_seat) continue;
+                if (dynamic_cast<const SubGenerals*>(oil_well) && !late_game) continue;
                 if (best_well == -1 || near_map[oil_well->position] < near_map[game_state.generals[best_well]->position]) best_well = j;
             }
             const OilWell* best_well_obj = best_well >= 0 ? dynamic_cast<const OilWell*>(game_state.generals[best_well]) : nullptr;
@@ -544,7 +564,7 @@ private:
                 // 要么仍然能保持威慑，要么是占领中立油井
                 if (plan && plan->army_used <= curr_army - 1 &&
                     ((best_well_obj->player == -1 && !army_disadvantage) || curr_army - plan->army_used >= deterrence_analyzer->min_army * 1.2)) {
-                    // 但是不能被别人威胁
+                    // 不能被别人威胁
                     GameState temp_state;
                     temp_state.copy_as(game_state);
                     execute_operation(temp_state, my_seat, Operation::move_army(general->position, plan->plan[0].second, plan->army_used));
