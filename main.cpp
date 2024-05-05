@@ -535,7 +535,8 @@ private:
             // 假如能够威慑敌方，但敌方无法威慑我，则主动贴近
             int enemy_eff_dist = Dist_map::effect_dist(general->position, enemy_general->position, true, game_state.get_mobility(my_seat));
             Deterrence_analyzer sub_general_det(general, enemy_general, game_state.coin[my_seat], game_state);
-            bool atk_cond = (oil_after_op >= oil_savings || (is_subgeneral && oil_after_op >= sub_general_det.min_oil)) && (my_prod > 0 && enemy_eff_dist <= 1 && threat_eff_dist > enemy_eff_dist);
+            bool atk_cond = (oil_after_op >= oil_savings || (is_subgeneral && oil_after_op >= sub_general_det.min_oil))
+                            && (my_prod > 0 && ((enemy_eff_dist <= 1 && threat_eff_dist > enemy_eff_dist) || militia_strategy));
             atk_cond |= oil_after_op >= 300;
             if (atk_cond) { // threat_eff_dist在找不到威胁时还是有问题的
                 strategies.emplace_back(General_strategy{i, General_strategy_type::ATTACK, Strategy_target(enemy_general)});
