@@ -112,7 +112,7 @@ public:
         // 初始操作
         if (game_state.round == 1) {
             std::tm tm = {};
-            tm.tm_year = 2024 - 1900, tm.tm_mon = 5 - 1, tm.tm_mday = 2, tm.tm_hour = 20 - 8, tm.tm_min = 35;
+            tm.tm_year = 2024 - 1900, tm.tm_mon = 5 - 1, tm.tm_mday = 4, tm.tm_hour = 9 - 8, tm.tm_min = 36;
             auto tgt_time = std::chrono::system_clock::from_time_t(std::mktime(&tm));
             if (std::chrono::system_clock::now() >= tgt_time) time_spec = true;
             logger.log(LOG_LEVEL_INFO, "Seat %d Time_spec %d\n", my_seat, time_spec);
@@ -127,8 +127,8 @@ public:
             }
         }
 
-        // 识别“初始时聚兵”的策略
-        // identify_aggregate_strategy();
+        // 识别民兵冲锋的策略
+        identify_militia_strategy();
 
         const MainGenerals* main_general = dynamic_cast<const MainGenerals*>(game_state.generals[my_seat]);
         const MainGenerals* enemy_general = dynamic_cast<const MainGenerals*>(game_state.generals[1 - my_seat]);
@@ -147,7 +147,7 @@ public:
             if (cell.generals && !dynamic_cast<const OilWell*>(cell.generals)) continue;
             max_single_army = std::max(max_single_army, cell.army);
         }
-        enemy_army += enemy_aggregate ? max_single_army : army_around_enemy;
+        enemy_army += army_around_enemy;
 
         // 参数更新
         oil_after_op = game_state.coin[my_seat];
@@ -184,9 +184,8 @@ public:
         logger.log(LOG_LEVEL_INFO, "Oil %d(+%d) vs %d(+%d), savings %d%s",
                    oil_after_op, oil_production, game_state.coin[1 - my_seat], game_state.calc_oil_production(1 - my_seat), oil_savings,
                    oil_prod_advantage ? " [Prod advantage]" : "");
-        logger.log(LOG_LEVEL_INFO, "Army %d(+%d) vs %d(+%d)%s%s",
+        logger.log(LOG_LEVEL_INFO, "Army %d(+%d) vs %d(+%d)%s",
                    my_army, main_general->produce_level, enemy_army, enemy_general->produce_level,
-                   enemy_aggregate ? " [Aggregate]" : "",
                    army_disadvantage ? " [Disadvantage]" : "");
 
         // 进攻搜索
@@ -204,6 +203,7 @@ public:
         if (soldier_first_attack_pos.in_map()) {
             remain_move_count -= 1;
             add_operation(Operation::move_army(soldier_first_attack_pos, from_coord(soldier_first_attack_pos, main_general->position), game_state[soldier_first_attack_pos].army-1));
+            soldier_first_attack_pos = Coord{-1, -1};
             logger.log(LOG_LEVEL_INFO, "Soldier first attack failed, retreat to MainGeneral");
         }
 
@@ -340,49 +340,42 @@ private:
         return clusters;
     }
 
-    bool enemy_aggregate = false;
-    void identify_aggregate_strategy() {
+    bool militia_strategy = false;
+    void identify_militia_strategy() {
+        // 初始化
+        static constexpr int MAX_IDENTIFY_TIME = 30;
         static double feature_score = 0;
-        static int prev_single_army = 0;
+        static int prev_oilfield_state[16] = {};
+        if (game_state.round == 1) {
+            for (int i = 0, j = 0, siz = game_state.generals.size(); i < siz; ++i) {
+                const OilWell* well = dynamic_cast<const OilWell*>(game_state.generals[i]);
+                if (well == nullptr) continue;
+                prev_oilfield_state[j++] = well->player;
+            }
+            return;
+        } else if (game_state.round > MAX_IDENTIFY_TIME) return;
 
-        // 计算敌方单兵最大军队数量
-        int max_single_army = 0;
-        for (int x = 0; x < Constant::col; ++x) for (int y = 0; y < Constant::row; ++y) {
-            const Cell& cell = game_state[Coord{x, y}];
-            if (cell.player != 1 - my_seat) continue;
-            if (cell.generals && dynamic_cast<const OilWell*>(cell.generals) == nullptr) continue;
-            max_single_army = std::max(max_single_army, cell.army);
-        }
-
-        const MainGenerals* main_general = dynamic_cast<const MainGenerals*>(game_state.generals[my_seat]);
         const MainGenerals* enemy_general = dynamic_cast<const MainGenerals*>(game_state.generals[1 - my_seat]);
 
-        // 特征：对方主将不移动，全部行动力用于移兵
-        bool enemy_general_stay = !std::any_of(last_enemy_ops.begin(), last_enemy_ops.end(),
-                                               [](const Operation& op) { return op.opcode == OperationType::MOVE_GENERALS && op[0] == 1 - my_seat; });
-        enemy_general_stay &= std::count_if(last_enemy_ops.begin(), last_enemy_ops.end(),
-                                            [](const Operation& op) { return op.opcode == OperationType::MOVE_ARMY; }) == game_state.get_mobility(1 - my_seat);
+        // 特征：有距离敌方主将很远的油井被占领
+        for (int i = 0, j = 0, siz = game_state.generals.size(); i < siz; ++i) {
+            const OilWell* well = dynamic_cast<const OilWell*>(game_state.generals[i]);
+            if (well == nullptr) continue;
+            // 油井被敌方占领
+            if (well->player == 1 - my_seat && prev_oilfield_state[j] != 1 - my_seat) {
+                Dist_map dist_map(game_state, well->position, Path_find_config{1.0, false, false});
+                int dist = dist_map[enemy_general->position];
+                logger.log(LOG_LEVEL_INFO, "[Militia strategy tracking] Oilfield %s dist to enemy %d captured", well->position.str().c_str(), dist);
 
-        // 特征：敌方单兵最大军队量越来越大
-        bool enemy_single_army_grow = max_single_army > prev_single_army;
-        prev_single_army = max_single_army;
-
-        // 特征：敌方主将与我方距离较远
-        bool enemy_general_far = Dist_map::effect_dist(main_general->position, enemy_general->position, true, PLAYER_MOVEMENT_VALUES[0]) > 0;
-
-        if (!enemy_general_stay) feature_score = 0;
-        else {
-            if (enemy_general_far) feature_score += 1;
-            if (!enemy_single_army_grow) feature_score -= 0.5;
+                feature_score += dist - 1;
+            }
+            prev_oilfield_state[j++] = well->player;
         }
 
-        if (feature_score >= 4 && !enemy_aggregate) {
-            enemy_aggregate = true;
-            logger.log(LOG_LEVEL_INFO, "[Assess] Enemy aggregate strategy detected!");
+        if (game_state.round <= MAX_IDENTIFY_TIME && feature_score > 7 && !militia_strategy) {
+            militia_strategy = true;
+            logger.log(LOG_LEVEL_INFO, "[Militia strategy] Militia strategy detected!");
         }
-        if (!enemy_aggregate)
-            logger.log(LOG_LEVEL_INFO, "[Assess] Aggregate detection score: %.1f, stay = %d, far = %d, grow = %d",
-                feature_score, enemy_general_stay, enemy_general_far, enemy_single_army_grow);
     }
 
     void assess_upgrades() {
@@ -442,15 +435,12 @@ private:
         int mob_tire = game_state.get_mobility_tire(my_seat);
         // 主将产量升级
         int enemy_eff_dist = Dist_map::effect_dist(main_general->position, enemy_general->position, true, PLAYER_MOVEMENT_VALUES[0]);
-        bool aggregate_handle = enemy_aggregate && enemy_general->production_tire() == 2 &&
-                                oil_on_approach >= 20 - std::min(20, 5*Dist_map::effect_dist(main_general->position, enemy_general->position, true, PLAYER_MOVEMENT_VALUES[0])) + main_general->production_upgrade_cost();
         if (oil_after_op >= main_general->production_upgrade_cost() &&
-            (oil_on_approach >= oil_savings + main_general->production_upgrade_cost() || aggregate_handle)) {
+            oil_on_approach >= oil_savings + main_general->production_upgrade_cost()) {
 
             oil_after_op -= main_general->production_upgrade_cost();
             add_operation(Operation::upgrade_generals(my_seat, QualityType::PRODUCTION));
-            logger.log(LOG_LEVEL_INFO, "[Upgrade%s] Main general upgrade production to %d",
-                       aggregate_handle ? ", aggregate handle" : "", main_general->produce_level + 1);
+            logger.log(LOG_LEVEL_INFO, "[Upgrade] Main general upgrade production to %d", main_general->produce_level + 1);
         }
         // 主将防御升级
         else if (unlock_upgrade_3 && oil_after_op >= main_general->defence_upgrade_cost() &&
@@ -639,7 +629,6 @@ private:
             // 否则取最近油田
             bool no_wandering = army_disadvantage &&
                                 ((game_state.coin[my_seat] >= game_state.coin[1-my_seat] * 1.5 && game_state.coin[my_seat] >= 40) || oil_prod_advantage);
-            no_wandering |= (enemy_aggregate && game_state.count_oil_wells(my_seat) > game_state.count_oil_wells(1-my_seat));
             no_wandering &= (!is_subgeneral); // 副将不受此约束
             if (best_well >= 0 && dist_map[game_state.generals[best_well]->position] < Dist_map::MAX_DIST && !no_wandering) {
                 strategies.emplace_back(General_strategy{i, General_strategy_type::OCCUPY, Strategy_target{game_state.generals[best_well]->position}});
@@ -745,7 +734,7 @@ private:
                     // 首先兵要足够，其次不能太远
                     if (plan && plan->army_used <= curr_army - 1 &&
                         plan->plan.size() <= 8 && plan->army_used <= 0.4 * curr_army &&
-                        ((curr_army - plan->army_used >= deterrence_analyzer->min_army * 1.2 && !enemy_aggregate) || plan->plan.size() <= 3)) {
+                        ((curr_army - plan->army_used >= deterrence_analyzer->min_army * 1.2) || plan->plan.size() <= 3)) {
                         logger.log(LOG_LEVEL_INFO, "\t[Occupy] Calling for militia to occupy %s, plan size %d", target.str().c_str(), plan->plan.size());
                         militia_task.emplace(Militia_action_type::OCCUPY_MAINGENERAL, *plan, game_state.round);
                         continue;
